@@ -1,16 +1,20 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import ElementRenderer from './elements/ElementRenderer.vue'
 import NavigationBar from './NavigationBar.vue'
 import { post } from '../api'
+import { controls, startGamepad } from '../input'
 
 const props = defineProps({ menu: { type: Object, required: true } })
 const shell = ref(null)
+const pageUi = { drafts: new Map(), pages: new Map() }
+provide('menuPageUi', pageUi)
 const dragging = ref(false)
 const position = ref()
 const dimensions = ref()
 const dragOffset = { x: 0, y: 0 }
 let resizing = false
+let stopGamepad
 
 const page = computed(() => props.menu.pages[props.menu.activePageId])
 const elements = computed(() => page.value?.elementOrder.map((id) => page.value.elements[id]).filter(Boolean) || [])
@@ -44,6 +48,15 @@ const style = computed(() => ({
 }))
 
 function close() { post('close', { menuId: props.menu.menuId }) }
+function rememberFocus(event) {
+  const anchor = event.target.closest('[data-element-id]')
+  if (!anchor) return
+  pageUi.pages.set(props.menu.activePageId, {
+    ...pageUi.pages.get(props.menu.activePageId),
+    elementId: anchor.dataset.elementId,
+    controlIndex: [...anchor.querySelectorAll('[data-menu-control]')].indexOf(event.target),
+  })
+}
 function detectResize(event) {
   if (!resizeEnabled.value || event.button !== 0) return
   const rect = shell.value.getBoundingClientRect()
@@ -81,18 +94,47 @@ function stopPointer() {
 function keydown(event) {
   if (event.defaultPrevented) return
   if (event.key === 'Escape') { event.preventDefault(); close(); return }
+  if (event.key === 'Tab') {
+    const available = controls(shell.value)
+    const direction = event.shiftKey ? -1 : 1
+    available[(available.indexOf(document.activeElement) + direction + available.length) % available.length]?.focus()
+    event.preventDefault(); return
+  }
+  if (event.target.matches('input, textarea')) return
   if (props.menu.keys?.[event.key]) { post('keyAction', { menuId: props.menu.menuId, key: event.key }); event.preventDefault(); return }
   if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return
-  const controls = [...shell.value.querySelectorAll('[data-menu-control]:not([disabled])')]
-  if (!controls.length) return
-  const index = controls.indexOf(document.activeElement)
+  const available = controls(shell.value)
+  if (!available.length) return
+  const index = available.indexOf(document.activeElement)
   const direction = event.key === 'ArrowDown' ? 1 : -1
-  controls[(index + direction + controls.length) % controls.length].focus()
+  available[(index + direction + available.length) % available.length].focus()
   event.preventDefault()
 }
 
-watch(() => [props.menu.revision, props.menu.activePageId], async () => { await nextTick() })
+watch(() => props.menu.activePageId, async (pageId, previousPageId) => {
+  if (previousPageId && shell.value) {
+    pageUi.pages.set(previousPageId, {
+      ...pageUi.pages.get(previousPageId),
+      scroll: shell.value.querySelector('.content')?.scrollTop || 0,
+    })
+  }
+  await nextTick()
+  if (!shell.value) return
+  const saved = pageUi.pages.get(pageId)
+  const content = shell.value.querySelector('.content')
+  if (content) content.scrollTop = saved?.scroll || 0
+  const anchor = saved?.elementId && [...shell.value.querySelectorAll('[data-element-id]')].find((node) => node.dataset.elementId === saved.elementId)
+  const remembered = anchor?.querySelectorAll('[data-menu-control]')[saved?.controlIndex || 0]
+  const target = (remembered && !remembered.matches(':disabled') && remembered) || anchor?.querySelector('[data-menu-control]:not(:disabled)') || controls(shell.value).find((node) => node.closest('.content')) || shell.value.querySelector('.stepper-next:not(:disabled), .navigation .active:not(:disabled)') || controls(shell.value)[0]
+  target?.focus({ preventScroll: true })
+})
+watch(() => props.menu.revision, async () => {
+  await nextTick()
+  for (const [key, draft] of pageUi.drafts) if (!props.menu.pages[draft.pageId]?.elements[draft.elementId]) pageUi.drafts.delete(key)
+  for (const id of pageUi.pages.keys()) if (!props.menu.pages[id]) pageUi.pages.delete(id)
+})
 onMounted(() => {
+  stopGamepad = startGamepad(() => props.menu.config.controller === false ? null : shell.value)
   if (props.menu.config.persistPosition !== false) {
     try { position.value = JSON.parse(localStorage.getItem(`feather-menu-v2:${props.menu.menuId}:position`)) || undefined } catch { /* ignore invalid local state */ }
   }
@@ -102,11 +144,11 @@ onMounted(() => {
   window.addEventListener('pointermove', moveDrag); window.addEventListener('pointerup', stopPointer)
   nextTick(() => shell.value?.querySelector('[data-menu-control]:not([disabled])')?.focus())
 })
-onUnmounted(() => { window.removeEventListener('pointermove', moveDrag); window.removeEventListener('pointerup', stopPointer) })
+onUnmounted(() => { stopGamepad?.(); window.removeEventListener('pointermove', moveDrag); window.removeEventListener('pointerup', stopPointer) })
 </script>
 
 <template>
-  <section ref="shell" class="menu-shell" :class="`theme-${theme.preset || 'redemption'}`" :style="style" @pointerdown.capture="detectResize" @keydown="keydown">
+  <section ref="shell" class="menu-shell" role="dialog" aria-label="Menu" aria-modal="true" :class="`theme-${theme.preset || 'redemption'}`" :style="style" @focusin="rememberFocus" @pointerdown.capture="detectResize" @keydown="keydown">
     <button v-if="menu.config.closable !== false" class="close" aria-label="Close menu" @click="close">×</button>
     <div class="drag-region" @pointerdown="startDrag">
       <ElementRenderer v-for="element in inSlot('header')" :key="element.elementId" :element="element" :menu="menu" :page="page" />

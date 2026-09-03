@@ -2,6 +2,12 @@
 
 This ledger is a release gate, not a claim that browser-only work proves live RedM behavior. “Implemented” means source exists and local static/browser checks can exercise it. “Live pending” means packaged Cfx/RedM evidence is still required.
 
+## Reconciled status — 2026-09-03
+
+Dropdown acceptance is **complete**, explicitly confirmed by the maintainer. The main-PC build at `131a775` records required v1 parity confirmation. Older “live pending” entries below describe the original ledger and do not undo recorded main-PC tests. New work-PC changes need regression runs, not another dropdown design-acceptance cycle.
+
+Exact schemas, array replacement, callback validation, bounded acknowledgements/recovery, pause-close cancellation, standard browser-gamepad routing, keyboard ownership and accessible names are now implemented. The [README](../README.md) documents every element/configuration/export. Use the [release checklist](RELEASE_CHECKLIST.md) for current outstanding evidence, including real RedM controller support and consumer migrations.
+
 ## Menu-level capabilities
 
 | Capability | v1 behavior | v2 contract | Current evidence |

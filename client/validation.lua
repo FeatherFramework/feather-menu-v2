@@ -41,10 +41,13 @@ end
 
 local function Merge(target, changes)
     for key, value in pairs(changes) do
-        if type(value) == 'table' and type(target[key]) == 'table' then Merge(target[key], value)
+        if type(value) == 'table' and type(target[key]) == 'table' and key ~= 'options' and key ~= 'items' and key ~= 'pages' then Merge(target[key], value)
         else target[key] = Copy(value) end
     end
 end
+
+MenuValidation.Merge = Merge
+MenuValidation.Copy = Copy
 
 function MenuValidation.Id(value, path)
     if type(value) ~= 'string' or value == '' or #value > 128 or not value:match('^[%w%._:%-/]+$') then
@@ -58,6 +61,12 @@ function MenuValidation.ElementType(value)
         return MenuResults.Err('unsupported_element', 'Unsupported element type.', { elementType = value })
     end
     return nil
+end
+
+function MenuValidation.Handle(value, path)
+    if type(value) ~= 'string' or #value == 0 or #value > 1024 or not value:match('^[%w%._:%-/]+$') then
+        return Err(path, 'must be a returned menu/page handle.')
+    end
 end
 
 function MenuValidation.Table(value, path)
@@ -94,6 +103,8 @@ function MenuValidation.Payload(value, path, limits)
             entries = entries + 1
             if entries > maxEntries then return Err(path, ('exceeds %d total fields.'):format(maxEntries)) end
             if type(key) ~= 'string' and type(key) ~= 'number' then return Err(childPath, 'contains an unsupported key type.') end
+            if type(key) == 'string' and #key > 128 then return Err(childPath, 'contains an oversized field name.') end
+            if type(key) == 'number' and (not MenuValidation.Finite(key) or key < 1 or key % 1 ~= 0) then return Err(childPath, 'array keys must be positive integers.') end
             if key == '__proto__' or key == 'prototype' or key == 'constructor' then return Err(childPath .. '.' .. key, 'is reserved.') end
             local problem = Visit(nested, childPath .. '.' .. tostring(key), depth + 1)
             if problem then return problem end
@@ -123,7 +134,7 @@ local function ValidateOptions(spec, path)
     if #spec.options == 0 or #spec.options > 500 or Count(spec.options) ~= #spec.options then
         return Err(path .. '.options', 'must contain 1-500 sequential entries.')
     end
-    local values = {}
+    local values = { string = {}, number = {}, boolean = {} }
     for index, option in ipairs(spec.options) do
         local optionPath = path .. '.options.' .. index
         local value = option
@@ -140,9 +151,8 @@ local function ValidateOptions(spec, path)
         end
         if valueType == 'number' and not MenuValidation.Finite(value) then return Err(optionPath .. '.value', 'must be finite.') end
         if valueType == 'string' and #value > 256 then return Err(optionPath .. '.value', 'exceeds 256 characters.') end
-        local identity = valueType .. ':' .. tostring(value)
-        if values[identity] then return Err(optionPath .. '.value', 'must be unique.') end
-        values[identity] = true
+        if values[valueType][value] then return Err(optionPath .. '.value', 'must be unique.') end
+        values[valueType][value] = true
     end
 end
 
@@ -196,7 +206,8 @@ function MenuValidation.Element(elementType, spec, path)
         if spec.value == nil then return Err(path .. '.value', 'is required for this choice element.') end
         local selected = false
         for _, option in ipairs(spec.options) do
-            local optionValue = type(option) == 'table' and option.value or option
+            local optionValue = option
+            if type(option) == 'table' then optionValue = option.value end
             if type(optionValue) == type(spec.value) and optionValue == spec.value then selected = true; break end
         end
         if not selected then return Err(path .. '.value', 'must match one of the option values.') end
@@ -263,7 +274,7 @@ function MenuValidation.Navigation(spec, path)
     local ids = {}
     for index, page in ipairs(spec.pages) do
         if type(page) ~= 'table' then return Err(path .. '.pages.' .. index, 'must be a table.') end
-        problem = MenuValidation.Id(page.pageId, path .. '.pages.' .. index .. '.pageId')
+        problem = MenuValidation.Handle(page.pageId, path .. '.pages.' .. index .. '.pageId')
             or OptionalString(page, 'label', path .. '.pages.' .. index, 128)
             or OptionalBoolean(page, 'disabled', path .. '.pages.' .. index)
             or OptionalBoolean(page, 'hidden', path .. '.pages.' .. index)
@@ -272,4 +283,225 @@ function MenuValidation.Navigation(spec, path)
         ids[page.pageId] = true
     end
     return nil
+end
+
+-- Contract field allowlists: a typo is an error, rather than an ignored setting.
+local function Fields(spec, names, path)
+    if type(spec) ~= 'table' then return Err(path, 'must be a table.') end
+    local allowed = {}
+    for name in names:gmatch('%S+') do allowed[name] = true end
+    for name in pairs(spec) do
+        if not allowed[name] then return Err(path .. '.' .. tostring(name), 'is not a supported field.') end
+    end
+end
+MenuValidation.Fields = Fields
+
+function MenuValidation.Bytes(value, path, maximum)
+    local problem = MenuValidation.Payload(value, path)
+    if problem then return problem end
+    if json and json.encode then
+        local ok, encoded = pcall(json.encode, value)
+        if not ok then return Err(path, 'cannot be encoded as JSON.') end
+        if #encoded > (maximum or 65536) then return Err(path, 'exceeds the encoded byte budget.') end
+    end
+end
+
+local function Length(value, path, allowAuto)
+    if allowAuto and value == 'auto' then return nil end
+    if type(value) ~= 'string' then return Err(path, 'must be a CSS length string.') end
+    local amount, unit = value:match('^(%d+%.?%d*)([%a%%]+)$')
+    amount = tonumber(amount)
+    local bounds = { px = 8192, rem = 512, ['%'] = 100, vw = 100, vh = 100 }
+    if not amount or not bounds[unit] or amount > bounds[unit] then
+        return Err(path, 'must be a non-negative bounded px, rem, %, vw, or vh length.')
+    end
+end
+
+local function Color(value, path)
+    if type(value) ~= 'string' or #value > 64 then return Err(path, 'must be a bounded color string.') end
+    if value == 'transparent' or value == 'black' or value == 'white' then return nil end
+    if value:match('^#%x+$') and (#value == 4 or #value == 5 or #value == 7 or #value == 9) then return nil end
+    local r, g, b = value:match('^rgb%(%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*%)$')
+    local alpha
+    if not r then r, g, b, alpha = value:match('^rgba%(%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*([%d%.]+)%s*%)$') end
+    if r and tonumber(r) <= 255 and tonumber(g) <= 255 and tonumber(b) <= 255
+        and (not alpha or (tonumber(alpha) and tonumber(alpha) >= 0 and tonumber(alpha) <= 1)) then return nil end
+    return Err(path, 'must be hex, rgb(), rgba(), transparent, black, or white.')
+end
+
+function MenuValidation.Sound(spec, path)
+    local problem = Fields(spec, 'action soundset', path)
+    if problem then return problem end
+    for _, key in ipairs({ 'action', 'soundset' }) do
+        if type(spec[key]) ~= 'string' or #spec[key] == 0 or #spec[key] > 128 or not spec[key]:match('^[%w_%-]+$') then
+            return Err(path .. '.' .. key, 'must be a 1-128 character frontend sound identifier.')
+        end
+    end
+end
+
+local function Asset(value, path)
+    if type(value) ~= 'string' or #value == 0 or #value > 2048 then return Err(path, 'must be an asset path.') end
+    if value:find('..', 1, true) or value:find('[%s\\<>"\'()]') then return Err(path, 'contains unsafe path characters.') end
+    if value:match('^https://cfx%-nui%-[%w_%-]+/[%w_%.%/%-]+$') then return nil end
+    if value:match('^[%w_][%w_%.%/%-]*$') then return nil end
+    return Err(path, 'must be a relative path or https://cfx-nui-RESOURCE/path; remote and data URLs are excluded.')
+end
+
+local baseMenu, basePage, baseElement, baseNavigation = MenuValidation.Menu, MenuValidation.Page, MenuValidation.Element, MenuValidation.Navigation
+
+function MenuValidation.Menu(spec, path, requireKey)
+    path = path or 'spec'
+    local problem = baseMenu(spec, path, requireKey)
+        or Fields(spec, 'key draggable resizable closable persistPosition persistSize position size theme focus controller', path)
+    if problem then return problem end
+    problem = OptionalBoolean(spec, 'controller', path)
+    if problem then return problem end
+    if spec.focus ~= nil then
+        problem = Fields(spec.focus, 'keyboard cursor', path .. '.focus')
+            or OptionalBoolean(spec.focus, 'keyboard', path .. '.focus') or OptionalBoolean(spec.focus, 'cursor', path .. '.focus')
+        if problem then return problem end
+    end
+    if spec.position then
+        problem = Fields(spec.position, 'x y', path .. '.position'); if problem then return problem end
+        for key, value in pairs(spec.position) do problem = Length(value, path .. '.position.' .. key); if problem then return problem end end
+    end
+    if spec.size then
+        problem = Fields(spec.size, 'width height minWidth maxWidth minHeight maxHeight breakpoints', path .. '.size'); if problem then return problem end
+        for key, value in pairs(spec.size) do
+            if key == 'breakpoints' then
+                problem = Fields(value, '720 1080 1440 2160', path .. '.size.breakpoints'); if problem then return problem end
+                for breakpoint, width in pairs(value) do problem = Length(width, path .. '.size.breakpoints.' .. breakpoint); if problem then return problem end end
+            else problem = Length(value, path .. '.size.' .. key, key == 'height' or key == 'minHeight'); if problem then return problem end end
+        end
+    end
+    if spec.theme then
+        problem = Fields(spec.theme, 'preset accent background panel text muted radius fontFamily', path .. '.theme'); if problem then return problem end
+        for key, value in pairs(spec.theme) do
+            if key == 'preset' then
+                if value ~= 'redemption' then return Err(path .. '.theme.preset', 'must be redemption.') end
+            elseif key == 'radius' then problem = Length(value, path .. '.theme.radius')
+            elseif key == 'fontFamily' then
+                if value ~= 'Georgia, serif' and value ~= 'Arial, sans-serif' and value ~= 'monospace' then return Err(path .. '.theme.fontFamily', 'must be a documented local font stack.') end
+            else problem = Color(value, path .. '.theme.' .. key) end
+            if problem then return problem end
+        end
+    end
+    return MenuValidation.Bytes(spec, path)
+end
+
+function MenuValidation.Page(spec, path, requireKey)
+    return basePage(spec, path, requireKey) or Fields(spec, 'key', path or 'spec')
+end
+
+local elementFields = {
+    header = 'value', subheader = 'value', textdisplay = 'value', line = '', bottomline = '',
+    button = 'value sound', input = 'value placeholder maxLength', textarea = 'value placeholder maxLength rows',
+    number = 'value min max step placeholder', slider = 'value min max step', progress = 'value min max step text',
+    toggle = 'value onLabel offLabel sound', checkbox = 'value onLabel offLabel sound',
+    arrows = 'value options sound', dropdown = 'value options placeholder emptyText maxVisibleOptions sound',
+    radio = 'value options sound', colorpicker = 'value options sound',
+    gridslider = 'value maxx maxy step stepx stepy sound', pagearrows = 'current total sound',
+    imagebox = 'value image img alt sound', imageboxcontainer = 'items sound', spacer = 'size',
+}
+
+function MenuValidation.Element(elementType, spec, path)
+    path = path or 'spec'
+    local problem = baseElement(elementType, spec, path)
+    if problem then return problem end
+    problem = Fields(spec, 'key slot label disabled persist ' .. elementFields[elementType], path)
+    if problem then return problem end
+    if spec.sound ~= nil then problem = MenuValidation.Sound(spec.sound, path .. '.sound'); if problem then return problem end end
+    for _, key in ipairs({ 'alt', 'text', 'emptyText' }) do problem = OptionalString(spec, key, path, 256); if problem then return problem end end
+    if spec.maxLength ~= nil then
+        local maximum = elementType == 'textarea' and 4096 or 512
+        if not MenuValidation.Finite(spec.maxLength) or spec.maxLength % 1 ~= 0 or spec.maxLength < 1 or spec.maxLength > maximum then return Err(path .. '.maxLength', 'is outside the text length limit.') end
+        if spec.value and #spec.value > spec.maxLength then return Err(path .. '.value', 'exceeds maxLength.') end
+    end
+    if spec.rows ~= nil and (not MenuValidation.Finite(spec.rows) or spec.rows % 1 ~= 0 or spec.rows < 1 or spec.rows > 20) then return Err(path .. '.rows', 'must be an integer from 1 through 20.') end
+    for _, key in ipairs({ 'image', 'img' }) do if spec[key] ~= nil then problem = Asset(spec[key], path .. '.' .. key); if problem then return problem end end end
+    if elementType == 'imagebox' and not spec.image and not spec.img then return Err(path .. '.image', 'is required.') end
+    if elementType == 'gridslider' then problem = Fields(spec.value, 'x y', path .. '.value'); if problem then return problem end end
+    if optionTypes[elementType] then
+        for index, option in ipairs(spec.options) do
+            if type(option) == 'table' then
+                problem = Fields(option, 'value label text disabled' .. (elementType == 'colorpicker' and ' color' or ''), path .. '.options.' .. index)
+                if problem then return problem end
+            end
+            if elementType == 'colorpicker' then
+                local color = type(option) == 'table' and (option.color or option.value) or option
+                problem = Color(color, path .. '.options.' .. index); if problem then return problem end
+            end
+        end
+    end
+    if elementType == 'imageboxcontainer' then
+        local identities = { string = {}, number = {}, boolean = {} }
+        for index, item in ipairs(spec.items) do
+            local itemPath = path .. '.items.' .. index
+            problem = Fields(item, 'key value label image img alt disabled', itemPath)
+                or OptionalString(item, 'alt', itemPath, 256)
+            if problem then return problem end
+            if item.key ~= nil then problem = MenuValidation.Id(item.key, itemPath .. '.key'); if problem then return problem end end
+            local kind = type(item.value)
+            if kind ~= 'string' and kind ~= 'number' and kind ~= 'boolean' then return Err(itemPath .. '.value', 'must be a scalar value.') end
+            if identities[kind][item.value] then return Err(itemPath .. '.value', 'must be unique.') end
+            identities[kind][item.value] = true
+            if not item.image and not item.img then return Err(itemPath .. '.image', 'is required.') end
+            for _, key in ipairs({ 'image', 'img' }) do if item[key] then problem = Asset(item[key], itemPath .. '.' .. key); if problem then return problem end end end
+        end
+    end
+    return MenuValidation.Bytes(spec, path)
+end
+
+function MenuValidation.Navigation(spec, path)
+    path = path or 'spec'
+    local problem = baseNavigation(spec, path) or Fields(spec, 'type pages controlled allowDirectStep backLabel nextLabel finishLabel', path)
+    if problem then return problem end
+    for _, key in ipairs({ 'controlled', 'allowDirectStep' }) do problem = OptionalBoolean(spec, key, path); if problem then return problem end end
+    for _, key in ipairs({ 'backLabel', 'nextLabel', 'finishLabel' }) do problem = OptionalString(spec, key, path, 128); if problem then return problem end end
+    for index, page in ipairs(spec.pages) do
+        local pagePath = path .. '.pages.' .. index
+        problem = Fields(page, 'pageId label hidden disabled complete invalid', pagePath)
+            or OptionalBoolean(page, 'complete', pagePath) or OptionalBoolean(page, 'invalid', pagePath)
+        if problem then return problem end
+    end
+    return MenuValidation.Bytes(spec, path)
+end
+
+function MenuValidation.OpenOptions(spec, closeOnly)
+    local problem = Fields(spec, closeOnly and 'sound' or 'pageId keyboard cursor replace sound', 'options')
+    if problem then return problem end
+    if spec.pageId ~= nil then problem = MenuValidation.Handle(spec.pageId, 'options.pageId'); if problem then return problem end end
+    for _, key in ipairs({ 'keyboard', 'cursor', 'replace' }) do problem = OptionalBoolean(spec, key, 'options'); if problem then return problem end end
+    if spec.sound ~= nil then return MenuValidation.Sound(spec.sound, 'options.sound') end
+end
+
+function MenuValidation.ElementAction(element, event)
+    local spec, kind = element.data, element.type
+    local problem = Fields(event, 'menuId pageId elementId event value meta revision', 'event') or MenuValidation.Bytes(event, 'event')
+    if problem then return problem end
+    local action = event.event
+    if kind == 'button' or kind == 'imagebox' then
+        if action ~= 'activate' then return Err('event.event', 'must be activate.') end
+    elseif kind == 'imageboxcontainer' then
+        if action ~= 'child' then return Err('event.event', 'must be child.') end
+        for _, item in ipairs(spec.items) do
+            if item.value == event.value and not item.disabled then return nil end
+        end
+        return Err('event.value', 'must identify an enabled child.')
+    elseif kind == 'pagearrows' then
+        if action == 'previous' and event.value == -1 and spec.current > 1 then return nil end
+        if action == 'next' and event.value == 1 and spec.current < spec.total then return nil end
+        return Err('event.event', 'is outside the page boundaries.')
+    elseif stringValueTypes[kind] and kind ~= 'input' and kind ~= 'textarea' or kind == 'progress' or kind == 'spacer' or kind == 'line' or kind == 'bottomline' then
+        return Err('event.event', 'is not supported by a display element.')
+    else
+        if action ~= 'change' or event.value == nil then return Err('event.event', 'requires change and a value.') end
+        problem = MenuValidation.ElementChanges(kind, spec, { value = event.value }, 'event')
+        if problem then return problem end
+        if optionTypes[kind] then
+            for _, option in ipairs(spec.options) do
+                if type(option) == 'table' and option.value == event.value and option.disabled then return Err('event.value', 'is disabled.') end
+            end
+        end
+    end
 end

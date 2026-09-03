@@ -55,4 +55,35 @@ describe('MenuShell keyboard ownership', () => {
     expect(post).not.toHaveBeenCalledWith('close', expect.anything())
     wrapper.unmount()
   })
+
+  it('keeps Tab inside the menu and leaves text arrow keys alone', async () => {
+    const value = menu()
+    value.pages.selectors.elements.town = { elementId: 'town', type: 'input', data: { label: 'Text', value: 'draft' } }
+    const wrapper = mount(MenuShell, { props: { menu: value }, attachTo: document.body })
+    await nextTick()
+    const input = wrapper.get('input'); input.element.focus()
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(input.element)
+    await input.trigger('keydown', { key: 'Tab' })
+    expect(wrapper.element.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).not.toBe(input.element)
+    wrapper.unmount()
+  })
+
+  it('restores draft, focus and scroll across page navigation', async () => {
+    const value = menu()
+    value.pages.selectors.elements.town = { elementId: 'town', type: 'input', data: { label: 'Name', value: 'saved' } }
+    value.pages.display = { pageId: 'display', elementOrder: ['other'], elements: { other: { elementId: 'other', type: 'button', data: { label: 'Other' } } } }
+    const wrapper = mount(MenuShell, { props: { menu: value }, attachTo: document.body })
+    await nextTick()
+    const input = wrapper.get('input'); input.element.value = 'uncommitted'; await input.trigger('input'); input.element.focus()
+    wrapper.get('.content').element.scrollTop = 120
+    await wrapper.setProps({ menu: { ...value, activePageId: 'display' } }); await nextTick()
+    expect(wrapper.find('input').exists()).toBe(false)
+    await wrapper.setProps({ menu: { ...value, activePageId: 'selectors' } }); await nextTick()
+    expect(wrapper.get('input').element.value).toBe('uncommitted')
+    expect(document.activeElement).toBe(wrapper.get('input').element)
+    expect(wrapper.get('.content').element.scrollTop).toBe(120)
+    wrapper.unmount()
+  })
 })

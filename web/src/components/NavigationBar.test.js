@@ -49,4 +49,13 @@ describe('NavigationBar', () => {
     await wrapper.findAll('nav button')[1].trigger('click')
     expect(post).not.toHaveBeenCalled()
   })
+
+  it('disables direct step headings and a disabled next target', async () => {
+    const value = menu('stepper'); value.navigation.allowDirectStep = false; value.navigation.pages[1].disabled = true
+    const wrapper = mount(NavigationBar, { props: { menu: value } })
+    expect(wrapper.findAll('nav button').every((button) => button.element.disabled)).toBe(true)
+    expect(wrapper.get('.stepper-next').element.disabled).toBe(true)
+    await wrapper.get('.stepper-next').trigger('click')
+    expect(post).not.toHaveBeenCalled()
+  })
 })

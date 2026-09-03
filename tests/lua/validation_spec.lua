@@ -47,4 +47,26 @@ Invalid(MenuValidation.Navigation({ type = 'tabs', pages = {
     { pageId = 'menu/main' }, { pageId = 'menu/main' },
 } }), 'invalid_input', 'duplicate navigation page')
 
+Invalid(MenuValidation.Menu({ key = 'menu', dragable = true }, 'spec', true), 'invalid_input', 'unknown menu field')
+Invalid(MenuValidation.Menu({ key = 'menu', theme = { background = 'url(https://example.com)' } }, 'spec', true), 'invalid_input', 'CSS asset injection')
+Valid(MenuValidation.Menu({ key = 'menu', size = { width = '32rem', breakpoints = { ['720'] = '25rem' } }, theme = { background = 'rgba(22, 17, 14, .96)' } }, 'spec', true), 'bounded style tokens')
+Invalid(MenuValidation.Element('imagebox', { key = 'image', image = 'https://example.com/image.png' }), 'invalid_input', 'remote image rejected')
+Valid(MenuValidation.Element('imagebox', { key = 'image', image = 'https://cfx-nui-my-resource/images/icon.png' }), 'local Cfx image')
+Valid(MenuValidation.Element('dropdown', { key = 'bool', value = false, options = { { value = false, label = 'No' }, { value = true, label = 'Yes' } } }), 'false option values')
+Invalid(MenuValidation.Element('dropdown', { key = 'duplicates', value = 1, options = { 1, 1.0 } }), 'invalid_input', 'integer and float representations are the same choice')
+Invalid(MenuValidation.Element('textarea', { key = 'bio', value = 'too long', maxLength = 3 }), 'invalid_input', 'text length enforced')
+Invalid(MenuValidation.Element('textarea', { key = 'bio', rows = 0 }), 'invalid_input', 'textarea rows enforced')
+local options = { key = 'choice', value = 'a', options = { 'a', 'b', 'c' } }
+local replacement = MenuValidation.Copy(options)
+MenuValidation.Merge(replacement, { options = { 'a' } })
+Pass(#replacement.options == 1 and #options.options == 3, 'array replacement and defensive copy')
+Invalid(MenuValidation.ElementAction({ type = 'toggle', data = { key = 'toggle', value = false, persist = false } }, { event = 'change', value = 'bad' }), 'invalid_input', 'non-persisted callback validation')
+Invalid(MenuValidation.ElementAction({ type = 'dropdown', data = { key = 'choice', value = 'a', options = { 'a', { value = 'b', disabled = true } } } }, { event = 'change', value = 'b' }), 'invalid_input', 'disabled selection validation')
+Invalid(MenuValidation.ElementAction({ type = 'pagearrows', data = { key = 'pages', current = 1, total = 2 } }, { event = 'previous', value = -1 }), 'invalid_input', 'page boundary validation')
+Invalid(MenuValidation.OpenOptions({ keyboard = 'yes' }), 'invalid_input', 'focus flags are boolean')
+Invalid(MenuValidation.Sound({ action = '', soundset = 'HUD' }, 'sound'), 'invalid_input', 'empty sound identifier')
+-- The Cfx runtime supplies json.encode. This probe verifies the byte gate itself.
+json = { encode = function() return string.rep('x', 65537) end }
+Invalid(MenuValidation.Bytes({ key = 'oversized' }, 'payload'), 'invalid_input', 'encoded byte budget')
+json = nil
 print(('PASS validation suite %d assertions'):format(passed))

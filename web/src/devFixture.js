@@ -1,4 +1,22 @@
-import { handleMessage } from './store'
+import { handleMessage, state } from './store'
+
+export function simulateDevelopmentAction(endpoint, payload) {
+  const menu = state.menus[payload.menuId]
+  if (!menu) return { ok: true }
+  if (endpoint === 'close' || (endpoint === 'navigationIntent' && payload.action === 'finish')) {
+    handleMessage({ action: 'menu:close', menuId: menu.menuId })
+  }
+  if (endpoint === 'navigationIntent' && payload.toPageId) {
+    handleMessage({ action: 'menu:patch', menuId: menu.menuId, revision: menu.revision + 1,
+      operations: [{ op: 'page:activate', pageId: payload.toPageId }] })
+  }
+  if (endpoint === 'elementAction' && payload.event === 'change') {
+    handleMessage({ action: 'menu:patch', menuId: menu.menuId, revision: menu.revision + 1,
+      operations: [{ op: 'element:update', pageId: payload.pageId, elementId: payload.elementId, changes: { value: payload.value } }] })
+    return { ok: true, value: payload.value }
+  }
+  return { ok: true }
+}
 
 export function loadDevelopmentFixture() {
   if (new URLSearchParams(window.location.search).get('view') === 'stepper') {

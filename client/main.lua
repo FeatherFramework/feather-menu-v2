@@ -3,6 +3,7 @@ local menus = {}
 local activeMenuId = nil
 local uiReady = false
 local startedAt = GetGameTimer()
+local pausedMenuId = nil
 
 local limits = { menus = 64, pages = 64, elements = 512, patchOperations = 256 }
 
@@ -31,15 +32,7 @@ local function Copy(value, seen)
     return result
 end
 
-local function Merge(target, changes)
-    for key, value in pairs(changes) do
-        if type(value) == 'table' and type(target[key]) == 'table' then
-            Merge(target[key], value)
-        else
-            target[key] = Copy(value)
-        end
-    end
-end
+local Merge = MenuValidation.Merge
 
 -- Cfx marshals callbacks crossing a resource boundary as callable function-reference
 -- objects. They are tables in some runtime builds rather than plain Lua functions.
@@ -84,6 +77,13 @@ local function PublicMenu(menu)
     }
 end
 
+local function Budget(menu, incoming, outgoing)
+    -- Reserve envelope/ID overhead. Individual definitions are limited separately.
+    if not json or not json.encode then return nil end
+    local size = #json.encode(PublicMenu(menu)) + #json.encode(incoming or {}) - #json.encode(outgoing or {}) + 2048
+    if size > 1048576 then return MenuResults.Err('limit_exceeded', 'Menu snapshot exceeds the 1 MiB transport budget.') end
+end
+
 local function Send(action, payload)
     payload = payload or {}
     payload.action = action
@@ -91,11 +91,16 @@ local function Send(action, payload)
 end
 
 local function Sync(menu)
-    if uiReady then Send('menu:sync', { menu = PublicMenu(menu) }) end
+    if uiReady then
+        menu.sentAt = GetGameTimer()
+        menu.ackRevision = nil
+        Send('menu:sync', { menu = PublicMenu(menu) })
+    end
 end
 
 local function Mutate(menu, operations)
     menu.revision = menu.revision + 1
+    if not menu.sentAt then menu.sentAt = GetGameTimer() end
     if uiReady then Send('menu:patch', { menuId = menu.id, revision = menu.revision, operations = operations }) end
 end
 
@@ -117,13 +122,15 @@ local function Capabilities()
         features = {
             menus = 1, pages = 1, elements = 1, focus = 1, dropdowns = 1,
             draggable = 1, resizable = 1, themes = 1, reactiveState = 1,
-            tabs = 1, stepper = 1, ownerCleanup = 1, boundedValidation = 1,
+            tabs = 1, stepper = 1, ownerCleanup = 1, boundedValidation = 1, acknowledgements = 1, browserGamepad = 1,
         },
     })
 end
 
 local function Health()
-    return MenuResults.Ok({ state = uiReady and 'ready' or 'starting', uiReady = uiReady, menuCount = Count(menus), activeMenuId = activeMenuId })
+    local pending = 0
+    for _, menu in pairs(menus) do if menu.open and menu.ackRevision ~= menu.revision then pending = pending + 1 end end
+    return MenuResults.Ok({ state = uiReady and 'ready' or 'starting', uiReady = uiReady, menuCount = Count(menus), activeMenuId = activeMenuId, pendingAcknowledgements = pending })
 end
 
 exports('GetCapabilities', Capabilities)
@@ -164,6 +171,7 @@ exports('CreatePage', function(menuId, spec)
     if Count(menu.pages) >= limits.pages then return MenuResults.Err('limit_exceeded', 'Page limit reached.') end
     local pageId = menuId .. '/' .. spec.key
     if menu.pages[pageId] then return MenuResults.Err('conflict', 'Page key already exists in this menu.') end
+    local overBudget = Budget(menu, spec); if overBudget then return overBudget end
     menu.pages[pageId] = { id = pageId, key = spec.key, config = Copy(spec), elements = {}, elementOrder = {} }
     menu.pageOrder[#menu.pageOrder + 1] = pageId
     Mutate(menu, { { op = 'page:add', page = { pageId = pageId, key = spec.key, config = Copy(spec), elements = {} } } })
@@ -175,6 +183,7 @@ exports('UpdatePage', function(menuId, pageId, changes)
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
     local page; page, failure = PageFor(menu, pageId); if failure then return failure end
     local invalid = MenuValidation.Page(changes, 'changes', false); if invalid then return invalid end
+    if changes.key and changes.key ~= page.key then return MenuResults.Err('invalid_input', 'Page keys cannot be changed.') end
     Merge(page.config, changes); Mutate(menu, { { op = 'page:update', pageId = pageId, changes = Copy(changes) } })
     return MenuResults.Ok({ revision = menu.revision })
 end)
@@ -191,7 +200,15 @@ exports('DestroyPage', function(menuId, pageId, fallbackPageId)
     end
     menu.pages[pageId] = nil
     for index, id in ipairs(menu.pageOrder) do if id == pageId then table.remove(menu.pageOrder, index); break end end
-    Mutate(menu, { { op = 'page:remove', pageId = pageId, fallbackPageId = fallbackPageId } })
+    local operations = { { op = 'page:remove', pageId = pageId, fallbackPageId = fallbackPageId } }
+    if menu.navigation then
+        local pages = {}
+        for _, item in ipairs(menu.navigation.pages) do if item.pageId ~= pageId then pages[#pages + 1] = item end end
+        if #pages == 0 then menu.navigation = nil; menu.navigationCallback = nil
+        else menu.navigation.pages = pages end
+        operations[#operations + 1] = { op = 'navigation:set', navigation = menu.navigation and Copy(menu.navigation) or false }
+    end
+    Mutate(menu, operations)
     return MenuResults.Ok({ destroyed = true, revision = menu.revision })
 end)
 
@@ -206,6 +223,7 @@ exports('AddElement', function(menuId, pageId, elementType, spec, callback)
     local elementId = pageId .. '/' .. spec.key
     if page.elements[elementId] then return MenuResults.Err('conflict', 'Element key already exists on this page.') end
     local public = { elementId = elementId, key = spec.key, type = elementType, data = Copy(spec) }
+    local overBudget = Budget(menu, public); if overBudget then return overBudget end
     page.elements[elementId] = { public = public, callback = callback }
     page.elementOrder[#page.elementOrder + 1] = elementId
     Mutate(menu, { { op = 'element:add', pageId = pageId, element = Copy(public) } })
@@ -218,6 +236,9 @@ local function UpdateElement(owner, menuId, pageId, elementId, changes)
     local element = page.elements[elementId]
     if not element then return MenuResults.Err('not_found', 'Element was not found.') end
     local invalid = MenuValidation.ElementChanges(element.public.type, element.public.data, changes, 'changes'); if invalid then return invalid end
+    if changes.key and changes.key ~= element.public.key then return MenuResults.Err('invalid_input', 'Element keys cannot be changed.') end
+    local candidate = Copy(element.public.data); Merge(candidate, changes)
+    local overBudget = Budget(menu, candidate, element.public.data); if overBudget then return overBudget end
     Merge(element.public.data, changes)
     Mutate(menu, { { op = 'element:update', pageId = pageId, elementId = elementId, changes = Copy(changes) } })
     return MenuResults.Ok({ revision = menu.revision })
@@ -258,6 +279,10 @@ exports('UpdateMenu', function(menuId, changes)
     local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
     local invalid = MenuValidation.Menu(changes, 'changes', false); if invalid then return invalid end
+    if changes.key and changes.key ~= menu.key then return MenuResults.Err('invalid_input', 'Menu keys cannot be changed.') end
+    local candidate = Copy(menu.config); Merge(candidate, changes)
+    invalid = MenuValidation.Menu(candidate, 'changes', true); if invalid then return invalid end
+    local overBudget = Budget(menu, candidate, menu.config); if overBudget then return overBudget end
     Merge(menu.config, changes); Mutate(menu, { { op = 'menu:update', changes = Copy(changes) } })
     return MenuResults.Ok({ revision = menu.revision })
 end)
@@ -265,9 +290,11 @@ end)
 exports('ApplyPatch', function(menuId, operations)
     local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
-    if type(operations) ~= 'table' or #operations == 0 or #operations > limits.patchOperations then
+    local payloadError = MenuValidation.Bytes(operations, 'operations', 262144); if payloadError then return payloadError end
+    if type(operations) ~= 'table' or #operations == 0 or #operations > limits.patchOperations or Count(operations) ~= #operations then
         return MenuResults.Err('invalid_input', 'operations must be a non-empty bounded array.')
     end
+    local targets, incoming, outgoing = {}, {}, {}
     for index, operation in ipairs(operations) do
         if type(operation) ~= 'table' or operation.op ~= 'updateElement' or type(operation.changes) ~= 'table' then
             return MenuResults.Err('invalid_input', 'Contract 1 patches currently accept updateElement operations.', { index = index })
@@ -277,9 +304,18 @@ exports('ApplyPatch', function(menuId, operations)
             return MenuResults.Err('not_found', 'Patch references an unknown page or element.', { index = index })
         end
         local element = page.elements[operation.elementId]
+        local fields = MenuValidation.Fields(operation, 'op pageId elementId changes', 'operations.' .. index)
+        if fields then return fields end
+        targets[operation.pageId] = targets[operation.pageId] or {}
+        if targets[operation.pageId][operation.elementId] then return MenuResults.Err('conflict', 'Each element may appear only once in an atomic patch.') end
+        targets[operation.pageId][operation.elementId] = true
+        if operation.changes.key and operation.changes.key ~= element.public.key then return MenuResults.Err('invalid_input', 'Element keys cannot be changed.') end
         local invalid = MenuValidation.ElementChanges(element.public.type, element.public.data, operation.changes, 'operations.' .. index .. '.changes')
         if invalid then return invalid end
+        local candidate = Copy(element.public.data); Merge(candidate, operation.changes)
+        incoming[#incoming + 1] = candidate; outgoing[#outgoing + 1] = element.public.data
     end
+    local overBudget = Budget(menu, incoming, outgoing); if overBudget then return overBudget end
     local publicOperations = {}
     for _, operation in ipairs(operations) do
         local element = menu.pages[operation.pageId].elements[operation.elementId]
@@ -297,6 +333,8 @@ exports('ConfigureNavigation', function(menuId, spec, callback)
     local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
     local invalid = MenuValidation.Navigation(spec, 'spec'); if invalid then return invalid end
+    for _, item in ipairs(spec.pages) do if not menu.pages[item.pageId] then return MenuResults.Err('not_found', 'Navigation references an unknown page.') end end
+    local overBudget = Budget(menu, spec, menu.navigation); if overBudget then return overBudget end
     if callback ~= nil and not IsCallable(callback) then return MenuResults.Err('invalid_input', 'callback must be callable.') end
     menu.navigation = Copy(spec); menu.navigationCallback = callback
     Mutate(menu, { { op = 'navigation:set', navigation = Copy(spec) } })
@@ -317,6 +355,7 @@ end)
 exports('RemoveKeyAction', function(menuId, key)
     local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
+    if type(key) ~= 'string' or key == '' or #key > 32 then return MenuResults.Err('invalid_input', 'key must be a 1-32 character string.') end
     menu.keyCallbacks[key] = nil
     Mutate(menu, { { op = 'key:remove', key = key } })
     return MenuResults.Ok({ key = key })
@@ -334,8 +373,12 @@ exports('UpdateNavigation', function(menuId, changes)
     local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
     if not menu.navigation then return MenuResults.Err('invalid_state', 'Navigation is not configured.') end
+    local payloadError = MenuValidation.Bytes(changes, 'changes'); if payloadError then return payloadError end
+    if type(changes) ~= 'table' then return MenuResults.Err('invalid_input', 'changes must be a table.') end
     local candidate = Copy(menu.navigation); Merge(candidate, changes)
     local invalid = MenuValidation.Navigation(candidate, 'changes'); if invalid then return invalid end
+    for _, item in ipairs(candidate.pages) do if not menu.pages[item.pageId] then return MenuResults.Err('not_found', 'Navigation references an unknown page.') end end
+    local overBudget = Budget(menu, candidate, menu.navigation); if overBudget then return overBudget end
     Merge(menu.navigation, changes); Mutate(menu, { { op = 'navigation:update', changes = Copy(changes) } })
     return MenuResults.Ok({ revision = menu.revision })
 end)
@@ -354,7 +397,8 @@ exports('OpenMenu', function(menuId, options)
     local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
     if not uiReady then return MenuResults.Err('not_ready', 'Feather Menu UI is not ready.') end
-    options = type(options) == 'table' and options or {}
+    options = options or {}
+    local invalid = MenuValidation.OpenOptions(options); if invalid then return invalid end
     local pageId = options.pageId or menu.activePageId or menu.pageOrder[1]
     if not pageId or not menu.pages[pageId] then return MenuResults.Err('invalid_state', 'Menu has no valid startup page.') end
     if activeMenuId and activeMenuId ~= menuId then
@@ -368,7 +412,10 @@ exports('OpenMenu', function(menuId, options)
     end
     menu.activePageId = pageId; menu.open = true; activeMenuId = menuId; Sync(menu)
     Send('menu:open', { menuId = menuId, pageId = pageId })
-    menu.focus = { keyboard = options.keyboard ~= false, cursor = options.cursor ~= false }
+    local defaults = menu.config.focus or {}
+    menu.focus = { keyboard = options.keyboard == nil and defaults.keyboard ~= false or options.keyboard == true,
+        cursor = options.cursor == nil and defaults.cursor ~= false or options.cursor == true }
+    pausedMenuId = nil
     SetNuiFocus(menu.focus.keyboard, menu.focus.cursor)
     if type(options.sound) == 'table' and type(options.sound.action) == 'string' and type(options.sound.soundset) == 'string' then
         PlaySoundFrontend(options.sound.action, options.sound.soundset, true, 0)
@@ -378,6 +425,7 @@ exports('OpenMenu', function(menuId, options)
 end)
 
 local function Close(menu, reason)
+    if pausedMenuId == menu.id then pausedMenuId = nil end
     local wasOpen = menu.open
     menu.open = false
     if activeMenuId == menu.id then activeMenuId = nil; SetNuiFocus(false, false) end
@@ -388,6 +436,7 @@ end
 exports('CloseMenu', function(menuId, options)
     local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
     local menu, failure = MenuFor(owner, menuId); if failure then return failure end
+    local invalid = MenuValidation.OpenOptions(options or {}, true); if invalid then return invalid end
     Close(menu, 'api')
     if type(options) == 'table' and type(options.sound) == 'table'
         and type(options.sound.action) == 'string' and type(options.sound.soundset) == 'string' then
@@ -430,6 +479,15 @@ RegisterNUICallback('ready', function(_, cb)
     cb({ ok = true })
 end)
 
+RegisterNUICallback('ack', function(data, cb)
+    local menu = type(data) == 'table' and menus[data.menuId] or nil
+    if not menu or not MenuValidation.Finite(data.revision) or data.revision % 1 ~= 0
+        or data.revision < 0 or data.revision > menu.revision then cb({ ok = false, code = 'invalid_input' }); return end
+    menu.ackRevision = math.max(menu.ackRevision or -1, data.revision)
+    if menu.ackRevision == menu.revision then menu.sentAt = nil; menu.recoveryAttempts = 0 end
+    cb({ ok = true })
+end)
+
 RegisterNUICallback('desync', function(data, cb)
     local menu = type(data) == 'table' and menus[data.menuId] or nil
     if menu then Sync(menu) end
@@ -448,9 +506,12 @@ RegisterNUICallback('elementAction', function(data, cb)
     local element = page and page.elements[data.elementId] or nil
     if not menu or not menu.open or menu.activePageId ~= data.pageId or not element then cb({ ok = false }); return end
     if element.public.data.disabled == true then cb({ ok = false }); return end
-    if data.value ~= nil and element.public.data.persist ~= false then
-        local invalid = MenuValidation.ElementChanges(element.public.type, element.public.data, { value = data.value }, 'callback.value')
-        if invalid then cb({ ok = false, code = invalid.code }); return end
+    local invalid = MenuValidation.ElementAction(element.public, data)
+    if invalid then cb(invalid); return end
+    if data.revision ~= nil and data.revision ~= menu.revision then Sync(menu); cb({ ok = false, code = 'conflict' }); return end
+    if data.event == 'change' and element.public.data.persist ~= false then
+        local candidate = Copy(element.public.data); candidate.value = Copy(data.value)
+        local overBudget = Budget(menu, candidate, element.public.data); if overBudget then cb(overBudget); return end
         element.public.data.value = Copy(data.value)
         Mutate(menu, { {
             op = 'element:update', pageId = page.id, elementId = element.public.elementId,
@@ -458,17 +519,48 @@ RegisterNUICallback('elementAction', function(data, cb)
         } })
     end
     if element.callback then
+        local value, meta = Copy(data.value), nil
+        if element.public.type == 'button' or element.public.type == 'imagebox' then value = Copy(element.public.data.value) end
+        if element.public.type == 'imageboxcontainer' then
+            for _, item in ipairs(element.public.data.items) do if item.value == data.value then meta = { child = Copy(item) }; break end end
+        end
         local ok, problem = Call(element.callback, {
             menuId = menu.id, pageId = page.id, elementId = element.public.elementId,
-            action = data.event or 'activate', value = Copy(data.value), meta = Copy(data.meta),
+            action = data.event, value = value, meta = meta,
         })
-        if not ok then print(('[%s] callback failed owner=%s element=%s error=%s'):format(resourceName, menu.owner, element.public.elementId, tostring(problem))) end
+        if not ok then
+            print(('[%s] callback failed owner=%s element=%s error=%s'):format(resourceName, menu.owner, element.public.elementId, tostring(problem)))
+            cb({ ok = false, code = 'callback_failed' }); return
+        end
     end
-    cb({ ok = true })
+    if element.public.data.sound then PlaySoundFrontend(element.public.data.sound.action, element.public.data.sound.soundset, true, 0) end
+    local response = { ok = true }
+    if data.event == 'change' then response.value = Copy(element.public.data.value) end
+    cb(response)
 end)
 
 RegisterNUICallback('navigationIntent', function(data, cb)
     local menu = type(data) == 'table' and menus[data.menuId] or nil
+    if not menu or not menu.open or not menu.navigation then cb({ ok = false, code = 'invalid_state' }); return end
+    local invalid = MenuValidation.Fields(data, 'menuId mode fromPageId toPageId action index', 'intent') or MenuValidation.Bytes(data, 'intent')
+    if invalid then cb(invalid); return end
+    if data.mode ~= menu.navigation.type or data.fromPageId ~= menu.activePageId then cb({ ok = false, code = 'conflict' }); return end
+    local visible, current, target = {}, nil, nil
+    for _, item in ipairs(menu.navigation.pages) do
+        if not item.hidden then
+            visible[#visible + 1] = item
+            if item.pageId == menu.activePageId then current = #visible end
+            if item.pageId == data.toPageId then target = item end
+        end
+    end
+    local allowed = target and not target.disabled
+    if menu.navigation.type == 'tabs' then allowed = allowed and data.action == 'select'
+    elseif data.action == 'finish' then allowed = current == #visible and current ~= nil and data.toPageId == nil
+    elseif data.action == 'next' then allowed = allowed and current and visible[current + 1] == target
+    elseif data.action == 'back' then allowed = allowed and current and visible[current - 1] == target
+    elseif data.action == 'step' then allowed = allowed and menu.navigation.allowDirectStep ~= false
+    else allowed = false end
+    if not allowed then cb({ ok = false, code = 'invalid_input' }); return end
     if menu and menu.open and menu.navigation and menu.navigation.type == 'tabs' and menu.navigation.controlled ~= true
         and type(data.toPageId) == 'string' and menu.pages[data.toPageId] then
         local fromPageId = menu.activePageId
@@ -478,7 +570,7 @@ RegisterNUICallback('navigationIntent', function(data, cb)
     end
     if menu and menu.open and menu.navigationCallback then
         local ok, problem = Call(menu.navigationCallback, Copy(data))
-        if not ok then print(('[%s] navigation callback failed: %s'):format(resourceName, tostring(problem))) end
+        if not ok then print(('[%s] navigation callback failed: %s'):format(resourceName, tostring(problem))); cb({ ok = false, code = 'callback_failed' }); return end
     end
     cb({ ok = menu ~= nil })
 end)
@@ -491,13 +583,6 @@ RegisterNUICallback('keyAction', function(data, cb)
         if not ok then print(('[%s] key callback failed: %s'):format(resourceName, tostring(problem))) end
     end
     cb({ ok = callback ~= nil })
-end)
-
-RegisterNUICallback('playSound', function(data, cb)
-    if type(data) == 'table' and type(data.action) == 'string' and type(data.soundset) == 'string' then
-        PlaySoundFrontend(data.action, data.soundset, true, 0)
-    end
-    cb({ ok = true })
 end)
 
 AddEventHandler('onClientResourceStop', function(stopped)
@@ -517,7 +602,6 @@ CreateThread(function()
 end)
 
 CreateThread(function()
-    local pausedMenuId = nil
     while true do
         Wait(0)
         if activeMenuId and IsPauseMenuActive() then
@@ -540,6 +624,20 @@ CreateThread(function()
                 Send('menu:open', { menuId = menu.id, pageId = menu.activePageId })
                 SetNuiFocus(menu.focus.keyboard, menu.focus.cursor)
                 EmitLifecycle(menu, 'resumed', { reason = 'pauseMenu' })
+            end
+        end
+    end
+end)
+
+-- Recover lost NUI delivery without creating an unbounded resend loop.
+CreateThread(function()
+    while true do
+        Wait(500)
+        for _, menu in pairs(menus) do
+            if menu.open and menu.sentAt and menu.ackRevision ~= menu.revision
+                and GetGameTimer() - menu.sentAt >= 2000 and (menu.recoveryAttempts or 0) < 3 then
+                menu.recoveryAttempts = (menu.recoveryAttempts or 0) + 1
+                Sync(menu)
             end
         end
     end

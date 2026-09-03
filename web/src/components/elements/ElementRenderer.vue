@@ -1,5 +1,5 @@
 <script setup>
-  import { computed, ref, watch } from "vue";
+  import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
   import { post } from "../../api";
   import DropdownElement from "./DropdownElement.vue";
 
@@ -9,15 +9,28 @@
     page: { type: Object, required: true },
   });
   const data = computed(() => props.element.data || {});
-  const localValue = ref(data.value.value ?? data.value.start ?? "");
+  const pageUi = inject('menuPageUi', null);
+  const draftKey = JSON.stringify([props.page.pageId, props.element.elementId]);
+  const savedDraft = pageUi?.drafts.get(draftKey);
+  const initialValue = savedDraft && JSON.stringify(savedDraft.base) === JSON.stringify(data.value.value)
+    ? savedDraft.value : data.value.value ?? (['number', 'slider'].includes(props.element.type) ? data.value.min ?? 0 : '');
+  const localValue = ref(initialValue);
   const gridPointerId = ref(null);
+  let commitSequence = 0;
+  onBeforeUnmount(() => {
+    if (pageUi && gridPointerId.value === null) pageUi.drafts.set(draftKey, {
+      pageId: props.page.pageId, elementId: props.element.elementId,
+      base: data.value.value === undefined ? undefined : JSON.parse(JSON.stringify(data.value.value)),
+      value: localValue.value === undefined ? undefined : JSON.parse(JSON.stringify(localValue.value)),
+    });
+  });
   watch(
     () => data.value.value,
     (value) => {
       if (value !== undefined) localValue.value = value;
     },
   );
-  const options = computed(() => data.value.options || []);
+  const options = computed(() => (data.value.options || []).map((option) => typeof option === 'object' ? option : { value: option, label: String(option) }));
   const displayOption = (option) => option?.label ?? option?.display ?? option?.text ?? option?.value ?? option;
   const currentIndex = computed(() => {
     const byValue = options.value.findIndex((option) => (option?.value ?? option) === localValue.value);
@@ -27,13 +40,15 @@
     const min = Number(data.value.min ?? 0),
       max = Number(data.value.max ?? 100),
       value = Number(data.value.value ?? min);
-    return Math.max(0, Math.min(100, ((value - min) / Math.max(1, max - min)) * 100));
+    return max === min ? 100 : Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
   });
 
-  function emit(event = "activate", value = localValue.value, meta) {
-    post("elementAction", { menuId: props.menu.menuId, pageId: props.page.pageId, elementId: props.element.elementId, event, value, meta });
-    const sound = data.value.sound;
-    if (sound?.action && sound?.soundset) post("playSound", sound);
+  async function emit(event = "activate", value = localValue.value, meta) {
+    const sequence = ++commitSequence;
+    const result = await post("elementAction", { menuId: props.menu.menuId, pageId: props.page.pageId, elementId: props.element.elementId, event, value, meta });
+    if (sequence !== commitSequence) return;
+    if (result?.ok === false) localValue.value = data.value.value ?? '';
+    else if (data.value.persist === false && result && Object.prototype.hasOwnProperty.call(result, 'value')) localValue.value = result.value;
   }
   function set(value, event = "change") {
     localValue.value = value;
@@ -41,8 +56,10 @@
   }
   function arrow(direction) {
     if (!options.value.length) return;
-    const index = (currentIndex.value + direction + options.value.length) % options.value.length;
-    set(options.value[index]?.value ?? options.value[index], "change");
+    for (let offset = 1; offset <= options.value.length; offset += 1) {
+      const index = (currentIndex.value + direction * offset + options.value.length) % options.value.length;
+      if (!options.value[index].disabled) { set(options.value[index].value, "change"); break; }
+    }
   }
   function pageArrow(direction) {
     emit(direction < 0 ? "previous" : "next", direction);
@@ -72,7 +89,13 @@
     emit("change", localValue.value);
   }
   function cancelGrid(event) {
-    if (gridPointerId.value === event.pointerId) gridPointerId.value = null;
+    if (gridPointerId.value === event.pointerId) { gridPointerId.value = null; localValue.value = data.value.value; }
+  }
+  function commitNumber(event) {
+    const input = event.target;
+    if (!Number.isFinite(input.valueAsNumber)) { localValue.value = data.value.value ?? data.value.min ?? 0; input.value = localValue.value; return; }
+    const value = Math.max(data.value.min ?? 0, Math.min(data.value.max ?? 100, input.valueAsNumber));
+    input.value = value; set(value);
   }
   function keyGrid(event) {
     const directions = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -117,12 +140,13 @@
         :value="localValue"
         :placeholder="data.placeholder"
         :disabled="data.disabled"
-        :min="data.min"
-        :max="data.max"
-        :step="data.step"
+        :min="element.type === 'number' ? data.min ?? 0 : undefined"
+        :max="element.type === 'number' ? data.max ?? 100 : undefined"
+        :step="element.type === 'number' ? data.step ?? 1 : undefined"
         :maxlength="data.maxLength"
+        :aria-label="data.label || data.placeholder || (element.type === 'number' ? 'Number' : 'Text')"
         @input="localValue = element.type === 'number' ? $event.target.valueAsNumber : $event.target.value"
-        @change="emit('change')"
+        @change="element.type === 'number' ? commitNumber($event) : emit('change')"
       />
     </label>
 
@@ -136,6 +160,7 @@
         :placeholder="data.placeholder"
         :disabled="data.disabled"
         :maxlength="data.maxLength"
+        :aria-label="data.label || data.placeholder || 'Text'"
         @input="localValue = $event.target.value"
         @change="emit('change')"
       />
@@ -163,7 +188,8 @@
       <button
         data-menu-control
         :class="['control', 'boolean', { checked: !!localValue }]"
-        role="switch"
+        :role="element.type === 'checkbox' ? 'checkbox' : 'switch'"
+        :aria-label="data.label || element.type"
         :aria-checked="!!localValue"
         :disabled="data.disabled"
         @click="set(!localValue)"
@@ -175,8 +201,8 @@
     <div v-else-if="element.type === 'arrows'" class="field">
       <span v-if="data.label">{{ data.label }}</span>
       <div class="arrow-control">
-        <button data-menu-control :disabled="data.disabled" @click="arrow(-1)">‹</button> <span>{{ displayOption(options[currentIndex]) }}</span
-        ><button data-menu-control :disabled="data.disabled" @click="arrow(1)">›</button>
+        <button data-menu-control :disabled="data.disabled" :aria-label="`Previous ${data.label || 'option'}`" @click="arrow(-1)">‹</button> <span>{{ displayOption(options[currentIndex]) }}</span
+        ><button data-menu-control :disabled="data.disabled" :aria-label="`Next ${data.label || 'option'}`" @click="arrow(1)">›</button>
       </div>
     </div>
 
@@ -184,7 +210,7 @@
 
     <fieldset v-else-if="element.type === 'radio'" class="field radio-group" :disabled="data.disabled">
       <legend>{{ data.label }}</legend>
-      <label v-for="option in options" :key="String(option.value)"
+      <label v-for="option in options" :key="`${typeof option.value}:${String(option.value)}`"
         ><input
           data-menu-control
           type="radio"
@@ -201,7 +227,7 @@
       <span
         >{{ data.label }} <output>{{ data.text ?? `${Math.round(progress)}%` }}</output></span
       >
-      <div class="progress" role="progressbar" :aria-valuemin="data.min ?? 0" :aria-valuemax="data.max ?? 100" :aria-valuenow="data.value">
+      <div class="progress" role="progressbar" :aria-label="data.label || 'Progress'" :aria-valuemin="data.min ?? 0" :aria-valuemax="data.max ?? 100" :aria-valuenow="data.value ?? data.min ?? 0">
         <i :style="{ width: `${progress}%` }" />
       </div>
     </div>
@@ -211,11 +237,12 @@
       <div class="palette-options">
         <button
           v-for="color in options"
-          :key="String(color.value ?? color)"
+          :key="`${typeof color.value}:${String(color.value)}`"
           data-menu-control
           :class="{ selected: (color.value ?? color) === localValue }"
           :style="{ background: color.color ?? color.value ?? color }"
           :aria-label="color.label ?? String(color.value ?? color)"
+          :aria-pressed="color.value === localValue"
           :disabled="data.disabled || color.disabled"
           @click="set(color.value ?? color)"
         />
@@ -233,7 +260,7 @@
         @pointermove="moveGrid"
         @pointerup="finishGrid"
         @pointercancel="cancelGrid"
-        @keydown.stop="keyGrid"
+        @keydown="keyGrid"
       >
         <i
           :style="{
@@ -245,8 +272,8 @@
     </div>
 
     <div v-else-if="element.type === 'pagearrows'" class="page-arrows">
-      <button data-menu-control :disabled="data.disabled || data.current <= 1" @click="pageArrow(-1)">‹</button><span>{{ data.current }}/{{ data.total }}</span
-      ><button data-menu-control :disabled="data.disabled || data.current >= data.total" @click="pageArrow(1)">›</button>
+      <button data-menu-control aria-label="Previous page" :disabled="data.disabled || data.current <= 1" @click="pageArrow(-1)">‹</button><span>{{ data.current }}/{{ data.total }}</span
+      ><button data-menu-control aria-label="Next page" :disabled="data.disabled || data.current >= data.total" @click="pageArrow(1)">›</button>
     </div>
 
     <button
@@ -265,7 +292,7 @@
         :key="item.key || item.value"
         data-menu-control
         class="image-box"
-        :disabled="item.disabled"
+        :disabled="data.disabled || item.disabled"
         @click="emit('child', item.value, { child: item })"
       >
         <img :src="item.image || item.img" :alt="item.alt || item.label || ''" /><span>{{ item.label }}</span>

@@ -136,4 +136,51 @@ describe('ElementRenderer interactions', () => {
     await wrapper.setProps({ element: { elementId: 'toggle', type: 'toggle', data: { label: 'Enabled', value: true } } })
     expect(wrapper.get('button').attributes('aria-checked')).toBe('true')
   })
+
+  it('keeps a text draft during unrelated label updates', async () => {
+    const wrapper = mountElement('input', { label: 'Name', value: 'saved' })
+    await wrapper.get('input').setValue('draft')
+    await wrapper.setProps({ element: { elementId: 'input', type: 'input', data: { label: 'Translated', value: 'saved' } } })
+    expect(wrapper.get('input').element.value).toBe('draft')
+  })
+
+  it('skips disabled arrow options and supports false values', async () => {
+    const wrapper = mountElement('arrows', { value: true, options: [true, { value: 'locked', disabled: true }, false] })
+    await wrapper.findAll('button')[1].trigger('click')
+    expect(post).toHaveBeenLastCalledWith('elementAction', expect.objectContaining({ value: false }))
+  })
+
+  it('restores a canceled grid drag without a callback', async () => {
+    const wrapper = mountElement('gridslider', { value: { x: 0.2, y: 0.3 }, maxx: 1, maxy: 1 })
+    const grid = wrapper.get('button')
+    grid.element.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100 })
+    await grid.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 80, clientY: 80 })
+    await grid.trigger('pointercancel', { pointerId: 1 })
+    expect(wrapper.get('i').attributes('style')).toContain('left: 20%')
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('clamps numeric commits and restores empty numeric input', async () => {
+    const wrapper = mountElement('number', { value: 5, min: 0, max: 10 })
+    await wrapper.get('input').setValue('40')
+    expect(post).toHaveBeenLastCalledWith('elementAction', expect.objectContaining({ value: 10 }))
+    post.mockClear()
+    await wrapper.get('input').setValue('')
+    expect(wrapper.get('input').element.value).toBe('5')
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('disables all image children with the parent and scales fractional progress', () => {
+    const wrapper = mountElement('imageboxcontainer', { disabled: true, items: [{ value: 'one', image: 'one.png' }] })
+    expect(wrapper.get('button').element.disabled).toBe(true)
+    const progress = mountElement('progress', { value: 0.5, min: 0, max: 0.5 })
+    expect(progress.get('i').attributes('style')).toContain('100%')
+  })
+
+  it('restores a rejected controlled toggle from the authoritative callback response', async () => {
+    post.mockResolvedValueOnce({ ok: true, value: false })
+    const wrapper = mountElement('toggle', { label: 'Controlled', value: false, persist: false })
+    await wrapper.get('button').trigger('click')
+    expect(wrapper.get('button').attributes('aria-checked')).toBe('false')
+  })
 })

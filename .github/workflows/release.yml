@@ -3,13 +3,14 @@ name: release
 on:
   push:
     branches: [main]
+    tags: ['v2.*']
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,62 +22,54 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - name: Verify Lua contract validation
+      - name: Verify Lua validation and runtime
         run: |
           sudo apt-get update
           sudo apt-get install -y lua5.4
           lua5.4 tests/lua/validation_spec.lua .
+          lua5.4 tests/lua/runtime_spec.lua .
       - name: Install and verify UI
         working-directory: web
         run: |
           pnpm install --frozen-lockfile
-          pnpm lint
-          pnpm test
-          pnpm build
-      - name: Stage runtime-only resource
+          pnpm check
+      - name: Stage and verify install archive
         shell: bash
         run: |
           set -euo pipefail
-          root="release/feather-menu-v2"
-          mkdir -p "$root/ui"
-          cp fxmanifest.lua README.md "$root/"
-          cp -R client docs "$root/"
-          cp -R ui/. "$root/ui/"
-      - name: Verify release layout
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="release/feather-menu-v2"
-          test -f "$root/ui/index.html"
-          test -n "$(find "$root/ui/assets" -maxdepth 1 -type f -print -quit)"
-          grep -q "ui_page 'ui/index.html'" "$root/fxmanifest.lua"
-          grep -q "'ui/assets/\*'" "$root/fxmanifest.lua"
-          test ! -e "$root/ui/dist"
-          test ! -e "$root/ui/src"
-          test ! -e "$root/ui/package.json"
-          test ! -e "$root/ui/pnpm-lock.yaml"
-          test ! -e "$root/ui/vite.config.js"
-          if find "$root" -type f \( -name '*.vue' -o -name '*.test.js' -o -name 'vite.config.js' -o -name 'eslint.config.js' \) -print -quit | grep -q .; then
-            echo 'Release contains frontend source/build files.' >&2
-            exit 1
-          fi
-      - name: Create release archive
-        shell: bash
-        run: |
-          cd release/feather-menu-v2
-          zip -r ../../feather-menu-v2.zip .
-      - name: Read version
-        id: version
-        shell: bash
-        run: echo "value=$(node -p \"require('./web/package.json').version\")" >> "$GITHUB_OUTPUT"
-      - name: Publish or replace versioned release asset
+          python3 scripts/package_release.py
+          cp .artifacts/feather-menu-v2.zip .artifacts/feather-menu-v2.zip.sha256 .
+          python3 scripts/verify_release.py feather-menu-v2.zip
+          sha256sum -c feather-menu-v2.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feather-menu-v2-install
+          path: |
+            feather-menu-v2.zip
+            feather-menu-v2.zip.sha256
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v2.')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: feather-menu-v2-install
+      - name: Publish tested tag artifact without replacing existing assets
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.value }}
+          TAG: ${{ github.ref_name }}
         shell: bash
         run: |
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" feather-menu-v2.zip --clobber
-          else
-            gh release create "$VERSION" feather-menu-v2.zip --target "$GITHUB_SHA" --title "Release $VERSION" --generate-notes
-          fi
+          set -euo pipefail
+          version=$(node -p "require('./web/package.json').version")
+          test "$TAG" = "v$version"
+          grep -Fq "version '$version'" fxmanifest.lua
+          sha256sum -c feather-menu-v2.zip.sha256
+          flags=()
+          if [[ "$version" == *-* ]]; then flags+=(--prerelease --latest=false); fi
+          gh release create "$TAG" feather-menu-v2.zip feather-menu-v2.zip.sha256 --verify-tag --title "Feather Menu v2 $version" --generate-notes "${flags[@]}"

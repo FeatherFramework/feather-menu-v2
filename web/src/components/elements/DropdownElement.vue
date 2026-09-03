@@ -8,7 +8,7 @@ const trigger = ref(null)
 const list = ref(null)
 const activeIndex = ref(0)
 const placement = ref({})
-const options = computed(() => props.element.data.options || [])
+const options = computed(() => (props.element.data.options || []).map((option) => typeof option === 'object' ? option : { value: option, label: String(option) }))
 const selectedValue = computed(() => props.element.data.value ?? props.element.data.selectedValue)
 const selected = computed(() => options.value.find((item) => item.value === selectedValue.value))
 const visibleRows = computed(() => Math.max(3, Math.min(10, Number(props.element.data.maxVisibleOptions) || 6)))
@@ -68,6 +68,7 @@ function enabledIndex(start, direction) {
 function keydown(event) {
   if (!open.value && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) { toggle(); event.preventDefault(); return }
   if (!open.value) return
+  if (event.key === 'Tab') { open.value = false; return }
   if (event.key === 'Escape') { open.value = false; trigger.value?.focus(); event.preventDefault(); return }
   if (event.key === 'Home') activeIndex.value = enabledIndex(0, 1)
   if (event.key === 'End') activeIndex.value = enabledIndex(options.value.length - 1, -1)
@@ -77,24 +78,28 @@ function keydown(event) {
   event.preventDefault()
 }
 function outside(event) { if (open.value && !trigger.value?.contains(event.target) && !list.value?.contains(event.target)) open.value = false }
+function onScroll(event) { if (open.value && !list.value?.contains(event.target)) position() }
 watch(() => [props.menu.activePageId, props.element.data.options, props.element.data.maxVisibleOptions, props.menu.config.theme], () => { if (open.value) position() }, { deep: true })
 watch(activeIndex, () => { if (open.value) revealActiveOption() })
 window.addEventListener('pointerdown', outside)
 window.addEventListener('resize', position)
-onBeforeUnmount(() => { window.removeEventListener('pointerdown', outside); window.removeEventListener('resize', position) })
+window.addEventListener('scroll', onScroll, true)
+onBeforeUnmount(() => { window.removeEventListener('pointerdown', outside); window.removeEventListener('resize', position); window.removeEventListener('scroll', onScroll, true) })
 </script>
 
 <template>
   <div class="field dropdown-field">
     <label v-if="element.data.label">{{ element.data.label }}</label>
     <button ref="trigger" data-menu-control class="control dropdown-trigger" role="combobox"
-      :aria-expanded="open" :disabled="element.data.disabled" @click="toggle" @keydown.stop="keydown">
+      :aria-label="element.data.label || element.data.placeholder || 'Select an option'"
+      :aria-controls="`${element.elementId}-list`" :aria-activedescendant="open && activeIndex >= 0 ? `${element.elementId}-option-${activeIndex}` : undefined"
+      :aria-expanded="open" :disabled="element.data.disabled" @click="toggle" @keydown="keydown" @keydown.up.stop @keydown.down.stop @keydown.esc.stop>
       <span>{{ selected?.label ?? selected?.text ?? element.data.placeholder ?? 'Select an option' }}</span><span>▾</span>
     </button>
     <Teleport to="#overlay-root">
-      <ul v-if="open" ref="list" class="dropdown-list" role="listbox" :style="placement">
+      <ul v-if="open" :id="`${element.elementId}-list`" ref="list" class="dropdown-list" role="listbox" :aria-label="element.data.label || 'Options'" :style="placement">
         <li v-if="options.length === 0" class="dropdown-empty">{{ element.data.emptyText || 'No options' }}</li>
-        <li v-for="(option, index) in options" :key="String(option.value)" role="option"
+        <li v-for="(option, index) in options" :id="`${element.elementId}-option-${index}`" :key="`${typeof option.value}:${String(option.value)}`" role="option" :aria-disabled="!!option.disabled"
           :aria-selected="option.value === selectedValue" :class="{ active: index === activeIndex, selected: option.value === selectedValue, disabled: option.disabled }"
           @pointerenter="activeIndex = index" @click="select(option)">{{ option.label ?? option.text ?? option.value }}</li>
       </ul>

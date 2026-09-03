@@ -28,13 +28,16 @@ export function syncMenu(snapshot) {
   if (snapshot.pages.some((page) => new Set(page.elements.map((element) => element.elementId)).size !== page.elements.length)) return false
   if (snapshot.activePageId && !pageIds.includes(snapshot.activePageId)) return false
   const current = state.menus[snapshot.menuId]
+  if (current && snapshot.revision < current.revision) return false
   state.menus[snapshot.menuId] = {
     ...snapshot,
     pages: pageMap(snapshot.pages),
     pageOrder: snapshot.pages.map((page) => page.pageId),
     position: current?.position,
-    keys: record(snapshot.keys) ? snapshot.keys : (current?.keys || {}),
+    keys: record(snapshot.keys) ? snapshot.keys : {},
   }
+  if (snapshot.open) state.activeMenuId = snapshot.menuId
+  else if (state.activeMenuId === snapshot.menuId) state.activeMenuId = null
   return true
 }
 
@@ -59,7 +62,7 @@ function validOperation(menu, operation) {
     && !menu.pages[operation.pageId].elements[operation.element.elementId]
   if (operation.op === 'element:update') return !!menu.pages[operation.pageId]?.elements[operation.elementId] && record(operation.changes)
   if (operation.op === 'element:remove') return !!menu.pages[operation.pageId]?.elements[operation.elementId]
-  if (operation.op === 'navigation:set') return operation.navigation === null || record(operation.navigation)
+  if (operation.op === 'navigation:set') return operation.navigation === null || operation.navigation === false || record(operation.navigation)
   if (operation.op === 'navigation:update') return record(menu.navigation) && record(operation.changes)
   if (operation.op === 'key:set' || operation.op === 'key:remove') return typeof operation.key === 'string'
   return false
