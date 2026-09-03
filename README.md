@@ -1,6 +1,6 @@
 # Feather Menu v2
-[![UI and Lua CI](https://github.com/DavFount/feather-menu-v2/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/DavFount/feather-menu-v2/actions/workflows/ci.yml)
-[![Latest version](https://img.shields.io/github/v/release/DavFount/feather-menu-v2?include_prereleases&label=latest)](https://github.com/DavFount/feather-menu-v2/releases)
+[![UI and Lua CI](https://github.com/FeatherFramework/feather-menu-v2/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/DavFount/feather-menu-v2/actions/workflows/ci.yml)
+[![Latest version](https://img.shields.io/github/v/release/DavFount/feather-menu-v2?include_prereleases&label=latest)](https://github.com/FeatherFramework/feather-menu-v2/releases)
 
 Build RedM menus from your resource's client-side Lua. Feather Menu v2 draws the menu, manages input and focus, and tells your code when the player changes something. Your resource decides what those changes mean.
 
