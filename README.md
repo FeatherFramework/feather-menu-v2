@@ -32,7 +32,7 @@ Build RedM menus from your resource's client-side Lua. Feather Menu v2 draws the
 Both resources can be installed together. Do not rename either folder or replace Legacy with v2. V2 does not implement the Legacy object API.
 
 1. Download the prepared `feather-menu-v2.zip` release asset, rather than GitHub's source-code archive.
-2. Extract its `feather-menu-v2` folder into your server's resources directory.
+2. Create a folder named `feather-menu-v2` inside your server's resources directory and extract the ZIP contents into it. The ZIP contains `fxmanifest.lua`, `client/`, and `ui/` directly, with no enclosing folder.
 3. Make sure `feather-menu-v2/fxmanifest.lua` and `feather-menu-v2/ui/index.html` exist.
 4. Start the menu before resources that use it:
 
@@ -775,7 +775,7 @@ lua tests/lua/runtime_spec.lua .
 
 The runtime suite stubs Cfx to test ownership, validation, atomic batches, callable callbacks, failure handling, acknowledgements, focus, pause cancellation, and cleanup. It does not replace live RedM tests.
 
-Main pushes/manual runs build a downloadable CI install artifact. Publishing requires an explicit `v2.*` tag matching the package and manifest versions; existing release assets are not silently replaced. The ZIP has one enclosing `feather-menu-v2` folder, compiled assets, and a SHA-256 checksum. Verify the actual archive with `python scripts/verify_release.py feather-menu-v2.zip`.
+Main pushes/manual runs build a downloadable CI install artifact. Publishing requires an explicit `v2.*` tag matching the package and manifest versions; existing release assets are not silently replaced. The ZIP contains runtime files directly at its root, including compiled assets; its SHA-256 checksum is provided separately. Extract it into a folder named `feather-menu-v2`. Verify the actual archive with `python scripts/verify_release.py feather-menu-v2.zip`.
 
 To make the same runtime-only ZIP locally after building, run `python scripts/package_release.py` from the repository root. It writes `.artifacts/feather-menu-v2.zip` and its checksum; then run `python scripts/verify_release.py .artifacts/feather-menu-v2.zip`.
 

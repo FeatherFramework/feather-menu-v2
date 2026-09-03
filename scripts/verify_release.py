@@ -61,9 +61,9 @@ def main():
             for entry in archive.infolist():
                 path = PurePosixPath(entry.filename)
                 assert not path.is_absolute() and ".." not in path.parts and "\\" not in entry.filename, "Unsafe ZIP path"
-                assert path.parts and path.parts[0] == "feather-menu-v2", "ZIP must have one feather-menu-v2 root"
+                assert path.parts and path.parts[0] in {'fxmanifest.lua', 'client', 'ui'}, "ZIP must contain runtime files directly at its root"
             archive.extractall(temporary)
-            verify(Path(temporary) / "feather-menu-v2")
+            verify(Path(temporary))
     print("PASS runtime artifact layout, assets, boundary, and bundle budget")
 
 

@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory() as temporary:
     with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as archive:
         for file in sorted(staged.rglob('*')):
             if file.is_file():
-                archive.write(file, file.relative_to(staged.parent).as_posix())
+                archive.write(file, file.relative_to(staged).as_posix())
 digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
 archive_path.with_suffix('.zip.sha256').write_text(f'{digest}  {archive_path.name}\n', encoding='ascii')
 print(f'Created {archive_path}\nSHA-256 {digest}')

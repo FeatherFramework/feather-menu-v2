@@ -6,7 +6,7 @@
 - Required renderer parity, tabs, stepper, and the initial RedM fixture were completed on the maintainer's main PC. Commit `131a775` is the work-PC starting point.
 - Work-PC hardening adds exact field allowlists, bounded style/assets/sounds, encoded budgets, callback and navigation validation, replacement arrays, acknowledgements with three bounded retries, pause-close cancellation, and standard browser-gamepad routing.
 - The README is the complete beginner-facing element/configuration/API reference. It includes a runnable starter, callback examples, migration guidance, and restart rebuilding.
-- Packaging now checks an actual single-root install ZIP, referenced assets, absence of frontend source, the 256 KiB raw UI budget, and exclusion of the development fixture. Main builds artifacts; explicit matching version tags publish without overwriting assets.
+- Packaging now checks an actual flat install ZIP, referenced assets, absence of frontend source, the 256 KiB raw UI budget, and exclusion of the development fixture. Main builds artifacts; explicit matching version tags publish without overwriting assets.
 - Local and GitHub packaging share one runtime file allowlist: `fxmanifest.lua`, the three manifest-loaded client Lua files, `ui/index.html`, and its referenced compiled JS/CSS assets. Documentation/README, tests, scripts, repository metadata and `.artifacts` are excluded. Verification rejects any extra file or directory, including stale/unreferenced assets. Checksums remain beside the ZIP.
 
 ## Automated commands
@@ -41,7 +41,7 @@ Record the commit, ZIP SHA-256, FXServer/RedM build, OS, resolution, controller,
 | Gate | Procedure | Status |
 | --- | --- | --- |
 | Hosted automated run | Clean Node 22/pnpm install; both Lua suites; UI tests/build; actual ZIP inspection | Pending hosted evidence for work-PC changes |
-| Basic install | Extract ZIP; ensure v2 then the README starter; open, edit, close, reopen | Pending new artifact run |
+| Basic install | Extract ZIP into a folder named `feather-menu-v2`; ensure v2 then the README starter; open, edit, close, reopen | Pending new artifact run |
 | Owner restart | Open starter, restart consumer; verify focus release and fresh menu construction | Pending |
 | Provider restart | Open Settings, restart v2; reopen Settings and starter without stale IDs | Pending |
 | Pause cancellation | Open, pause, close through Lua while suspended, unpause; it must remain closed | Pending |
