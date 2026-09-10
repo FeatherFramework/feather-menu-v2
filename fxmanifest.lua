@@ -5,7 +5,7 @@ lua54 'yes'
 
 author 'Feather Framework'
 description 'A focused, reactive menu system for Feather Framework and standalone RedM resources'
-version '2.0.0-alpha.2'
+version '2.0.0-alpha.3'
 
 ui_page 'ui/index.html'
 

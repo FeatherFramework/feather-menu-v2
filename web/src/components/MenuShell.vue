@@ -22,17 +22,23 @@ const inSlot = (slot) => elements.value.filter((element) => (element.data.slot |
 const theme = computed(() => props.menu.config.theme || {})
 const size = computed(() => props.menu.config.size || {})
 const resizeEnabled = computed(() => props.menu.config.resizable === true)
+const topLeftAnchored = computed(() => position.value?.anchor === 'top-left')
 const style = computed(() => ({
   left: position.value?.left || props.menu.config.position?.x || '50%',
   top: position.value?.top || props.menu.config.position?.y || '50%',
+  transform: topLeftAnchored.value ? 'none' : 'translate(-50%, -50%)',
   width: resizeEnabled.value && dimensions.value?.width
     ? dimensions.value.width
     : (size.value.breakpoints ? 'var(--fm-responsive-width)' : (size.value.width || '32rem')),
   height: resizeEnabled.value && dimensions.value?.height ? dimensions.value.height : (size.value.height || 'auto'),
   minWidth: size.value.minWidth || '18rem',
-  maxWidth: size.value.maxWidth || '90vw',
+  maxWidth: topLeftAnchored.value
+    ? `min(${size.value.maxWidth || '90vw'}, calc(100vw - ${position.value.left}))`
+    : (size.value.maxWidth || '90vw'),
   minHeight: size.value.minHeight || 'auto',
-  maxHeight: size.value.maxHeight || '85vh',
+  maxHeight: topLeftAnchored.value
+    ? `min(${size.value.maxHeight || '85vh'}, calc(100vh - ${position.value.top}))`
+    : (size.value.maxHeight || '85vh'),
   resize: resizeEnabled.value ? 'both' : 'none',
   '--fm-accent': theme.value.accent || '#a73732',
   '--fm-bg': theme.value.background || 'rgba(22, 17, 14, .96)',
@@ -48,6 +54,21 @@ const style = computed(() => ({
 }))
 
 function close() { post('close', { menuId: props.menu.menuId }) }
+function persistPosition() {
+  if (props.menu.config.persistPosition !== false) {
+    localStorage.setItem(`feather-menu-v2:${props.menu.menuId}:position`, JSON.stringify(position.value))
+  }
+}
+function normalizePosition() {
+  if (!shell.value || topLeftAnchored.value) return
+  const rect = shell.value.getBoundingClientRect()
+  position.value = {
+    left: `${Math.round(Math.max(0, Math.min(window.innerWidth - rect.width, rect.left)))}px`,
+    top: `${Math.round(Math.max(0, Math.min(window.innerHeight - Math.min(rect.height, 40), rect.top)))}px`,
+    anchor: 'top-left',
+  }
+  persistPosition()
+}
 function rememberFocus(event) {
   const anchor = event.target.closest('[data-element-id]')
   if (!anchor) return
@@ -74,8 +95,8 @@ function moveDrag(event) {
   const rect = shell.value.getBoundingClientRect()
   const left = Math.max(0, Math.min(window.innerWidth - rect.width, event.clientX - dragOffset.x))
   const top = Math.max(0, Math.min(window.innerHeight - Math.min(rect.height, 40), event.clientY - dragOffset.y))
-  position.value = { left: `${left + rect.width / 2}px`, top: `${top + rect.height / 2}px` }
-  if (props.menu.config.persistPosition !== false) localStorage.setItem(`feather-menu-v2:${props.menu.menuId}:position`, JSON.stringify(position.value))
+  position.value = { left: `${left}px`, top: `${top}px`, anchor: 'top-left' }
+  persistPosition()
 }
 function stopPointer() {
   dragging.value = false
@@ -83,13 +104,11 @@ function stopPointer() {
   resizing = false
   const rect = shell.value.getBoundingClientRect()
   dimensions.value = { width: `${Math.round(rect.width)}px`, height: `${Math.round(rect.height)}px` }
-  position.value = { left: `${Math.round(rect.left + rect.width / 2)}px`, top: `${Math.round(rect.top + rect.height / 2)}px` }
+  position.value = { left: `${Math.round(rect.left)}px`, top: `${Math.round(rect.top)}px`, anchor: 'top-left' }
   if (props.menu.config.persistSize !== false) {
     localStorage.setItem(`feather-menu-v2:${props.menu.menuId}:size`, JSON.stringify(dimensions.value))
   }
-  if (props.menu.config.persistPosition !== false) {
-    localStorage.setItem(`feather-menu-v2:${props.menu.menuId}:position`, JSON.stringify(position.value))
-  }
+  persistPosition()
 }
 function keydown(event) {
   if (event.defaultPrevented) return
@@ -142,7 +161,10 @@ onMounted(() => {
     try { dimensions.value = JSON.parse(localStorage.getItem(`feather-menu-v2:${props.menu.menuId}:size`)) || undefined } catch { /* ignore invalid local state */ }
   }
   window.addEventListener('pointermove', moveDrag); window.addEventListener('pointerup', stopPointer)
-  nextTick(() => shell.value?.querySelector('[data-menu-control]:not([disabled])')?.focus())
+  nextTick(() => {
+    normalizePosition()
+    shell.value?.querySelector('[data-menu-control]:not([disabled])')?.focus()
+  })
 })
 onUnmounted(() => { stopGamepad?.(); window.removeEventListener('pointermove', moveDrag); window.removeEventListener('pointerup', stopPointer) })
 </script>
