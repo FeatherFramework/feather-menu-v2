@@ -86,4 +86,31 @@ describe('MenuShell keyboard ownership', () => {
     expect(wrapper.get('.content').element.scrollTop).toBe(120)
     wrapper.unmount()
   })
+
+  it('normalizes center placement and keeps top-left fixed while resizing', async () => {
+    const value = menu()
+    value.config = {
+      ...value.config, resizable: true, persistSize: false, position: { x: '22%', y: '50%' },
+      size: { width: '400px', maxWidth: '90vw', maxHeight: '85vh' },
+    }
+    let rect = { left: 100, top: 80, right: 500, bottom: 380, width: 400, height: 300 }
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => rect)
+    const wrapper = mount(MenuShell, { props: { menu: value }, attachTo: document.body })
+    await nextTick()
+    await nextTick()
+    expect(wrapper.element.style.left).toBe('100px')
+    expect(wrapper.element.style.top).toBe('80px')
+    expect(wrapper.element.style.transform).toBe('none')
+
+    await wrapper.trigger('pointerdown', { button: 0, clientX: 495, clientY: 375 })
+    rect = { left: 100, top: 80, right: 600, bottom: 480, width: 500, height: 400 }
+    window.dispatchEvent(new MouseEvent('pointerup'))
+    await nextTick()
+    expect(wrapper.element.style.left).toBe('100px')
+    expect(wrapper.element.style.top).toBe('80px')
+    expect(wrapper.element.style.width).toBe('500px')
+    expect(wrapper.element.style.height).toBe('400px')
+    geometry.mockRestore()
+    wrapper.unmount()
+  })
 })
