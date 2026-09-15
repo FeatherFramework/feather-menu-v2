@@ -58,4 +58,15 @@ describe('NavigationBar', () => {
     await wrapper.get('.stepper-next').trigger('click')
     expect(post).not.toHaveBeenCalled()
   })
+
+  it('compacts long steppers so labels do not crowd the menu header', () => {
+    const value = menu('stepper')
+    value.navigation.pages = Array.from({ length: 8 }, (_, index) => ({
+      pageId: `page-${index + 1}`,
+      label: `Creation section ${index + 1}`,
+    }))
+
+    const wrapper = mount(NavigationBar, { props: { menu: value } })
+    expect(wrapper.get('nav').classes()).toContain('navigation-many-steps')
+  })
 })

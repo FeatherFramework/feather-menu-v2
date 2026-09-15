@@ -61,6 +61,7 @@ Rejected patches request one `desync` per menu until an accepted full sync clear
 - Tabs navigate automatically unless controlled. Steppers always emit intents; workflow validation remains in the consumer. Disabled/hidden targets and invalid step boundaries cannot be bypassed by a NUI intent.
 - Pointer grids commit once on release; cancellation does not commit. Range sliders emit while adjusted. Text/number controls commit on change; numbers clamp to bounds and reject empty/non-finite commits.
 - Keyboard ownership, standard browser-gamepad mappings, focus defaults, and shortcuts are documented in the README. Browser support does not establish live Cfx device support.
+- An owning consumer may use `SetMenuFocus` to release and restore modal input while keeping its active menu rendered; released menus do not suppress gameplay control groups.
 
 ## Stable-release evidence still required
 

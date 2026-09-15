@@ -73,7 +73,7 @@ local function PublicMenu(menu)
     return {
         menuId = menu.id, key = menu.key, revision = menu.revision, config = Copy(menu.config),
         pages = pages, activePageId = menu.activePageId, open = menu.open,
-        navigation = Copy(menu.navigation), keys = keys,
+        navigation = Copy(menu.navigation), keys = keys, focus = Copy(menu.focus),
     }
 end
 
@@ -122,7 +122,8 @@ local function Capabilities()
         features = {
             menus = 1, pages = 1, elements = 1, focus = 1, dropdowns = 1,
             draggable = 1, resizable = 1, themes = 1, reactiveState = 1,
-            tabs = 1, stepper = 1, ownerCleanup = 1, boundedValidation = 1, acknowledgements = 1, browserGamepad = 1,
+            tabs = 1, stepper = 1, ownerCleanup = 1, boundedValidation = 1, acknowledgements = 1,
+            browserGamepad = 1, modalInputCapture = 1, focusHandoff = 1,
         },
     })
 end
@@ -135,6 +136,12 @@ end
 
 exports('GetCapabilities', Capabilities)
 exports('GetHealth', Health)
+-- Public, owner-neutral input state. First-party hotkey providers can use this
+-- to avoid opening another UI while a modal Menu v2 instance owns focus.
+exports('IsInputCaptured', function()
+    local menu = activeMenuId and menus[activeMenuId] or nil
+    return (menu ~= nil and (menu.focus.keyboard or menu.focus.cursor)) == true
+end)
 exports('AwaitReady', function(timeoutMs)
     timeoutMs = tonumber(timeoutMs) or 0
     local deadline = GetGameTimer() + math.max(0, math.min(timeoutMs, 30000))
@@ -417,6 +424,7 @@ exports('OpenMenu', function(menuId, options)
         cursor = options.cursor == nil and defaults.cursor ~= false or options.cursor == true }
     pausedMenuId = nil
     SetNuiFocus(menu.focus.keyboard, menu.focus.cursor)
+    SetNuiFocusKeepInput(false)
     if type(options.sound) == 'table' and type(options.sound.action) == 'string' and type(options.sound.soundset) == 'string' then
         PlaySoundFrontend(options.sound.action, options.sound.soundset, true, 0)
     end
@@ -424,11 +432,34 @@ exports('OpenMenu', function(menuId, options)
     return MenuResults.Ok({ menuId = menuId, pageId = pageId })
 end)
 
+-- Temporarily hand input back to the game without hiding or rebuilding the
+-- active menu. The owning resource must explicitly restore focus afterward.
+exports('SetMenuFocus', function(menuId, options)
+    local owner = Owner(); if not owner then return MenuResults.Err('unauthenticated', 'Calling resource is required.') end
+    local menu, failure = MenuFor(owner, menuId); if failure then return failure end
+    if not menu.open or activeMenuId ~= menu.id then
+        return MenuResults.Err('invalid_state', 'Menu must be open and active to change focus.')
+    end
+    options = options or {}
+    local invalid = MenuValidation.FocusOptions(options); if invalid then return invalid end
+    menu.focus = {
+        keyboard = options.keyboard == nil and menu.focus.keyboard or options.keyboard == true,
+        cursor = options.cursor == nil and menu.focus.cursor or options.cursor == true,
+    }
+    SetNuiFocus(menu.focus.keyboard, menu.focus.cursor)
+    SetNuiFocusKeepInput(false)
+    return MenuResults.Ok(Copy(menu.focus))
+end)
+
 local function Close(menu, reason)
     if pausedMenuId == menu.id then pausedMenuId = nil end
     local wasOpen = menu.open
     menu.open = false
-    if activeMenuId == menu.id then activeMenuId = nil; SetNuiFocus(false, false) end
+    if activeMenuId == menu.id then
+        activeMenuId = nil
+        SetNuiFocusKeepInput(false)
+        SetNuiFocus(false, false)
+    end
     if uiReady then Send('menu:close', { menuId = menu.id }) end
     if wasOpen then EmitLifecycle(menu, 'closed', { reason = reason or 'api' }) end
 end
@@ -586,10 +617,14 @@ RegisterNUICallback('keyAction', function(data, cb)
 end)
 
 AddEventHandler('onClientResourceStop', function(stopped)
-    if stopped == resourceName then SetNuiFocus(false, false); return end
+    if stopped == resourceName then SetNuiFocusKeepInput(false); SetNuiFocus(false, false); return end
     for menuId, menu in pairs(menus) do
         if menu.owner == stopped then
-            if activeMenuId == menuId then SetNuiFocus(false, false); activeMenuId = nil end
+            if activeMenuId == menuId then
+                SetNuiFocusKeepInput(false)
+                SetNuiFocus(false, false)
+                activeMenuId = nil
+            end
             menus[menuId] = nil
             if uiReady then Send('menu:destroy', { menuId = menuId }) end
         end
@@ -610,6 +645,7 @@ CreateThread(function()
                 pausedMenuId = menu.id
                 menu.open = false
                 activeMenuId = nil
+                SetNuiFocusKeepInput(false)
                 SetNuiFocus(false, false)
                 Send('menu:close', { menuId = menu.id })
                 EmitLifecycle(menu, 'suspended', { reason = 'pauseMenu' })
@@ -623,8 +659,26 @@ CreateThread(function()
                 Sync(menu)
                 Send('menu:open', { menuId = menu.id, pageId = menu.activePageId })
                 SetNuiFocus(menu.focus.keyboard, menu.focus.cursor)
+                SetNuiFocusKeepInput(false)
                 EmitLifecycle(menu, 'resumed', { reason = 'pauseMenu' })
             end
+        end
+    end
+end)
+
+-- NUI focus alone does not consistently stop RedM controller actions. While a
+-- Menu v2 window owns focus, suppress every gameplay control group each frame;
+-- Chromium still receives its controller input for menu navigation.
+CreateThread(function()
+    while true do
+        local menu = activeMenuId and menus[activeMenuId] or nil
+        if menu and (menu.focus.keyboard or menu.focus.cursor) then
+            DisableAllControlActions(0)
+            DisableAllControlActions(1)
+            DisableAllControlActions(2)
+            Wait(0)
+        else
+            Wait(100)
         end
     end
 end)

@@ -19,6 +19,16 @@ let stopGamepad
 const page = computed(() => props.menu.pages[props.menu.activePageId])
 const elements = computed(() => page.value?.elementOrder.map((id) => page.value.elements[id]).filter(Boolean) || [])
 const inSlot = (slot) => elements.value.filter((element) => (element.data.slot || 'content') === slot)
+function groupedSlot(slot) {
+  const groups = []
+  for (const element of inSlot(slot)) {
+    const row = element.data.row
+    const previous = groups[groups.length - 1]
+    if (row && previous?.row === row) previous.elements.push(element)
+    else groups.push({ key: row ? `${row}:${element.elementId}` : element.elementId, row, elements: [element] })
+  }
+  return groups
+}
 const theme = computed(() => props.menu.config.theme || {})
 const size = computed(() => props.menu.config.size || {})
 const resizeEnabled = computed(() => props.menu.config.resizable === true)
@@ -173,14 +183,29 @@ onUnmounted(() => { stopGamepad?.(); window.removeEventListener('pointermove', m
   <section ref="shell" class="menu-shell" role="dialog" aria-label="Menu" aria-modal="true" :class="`theme-${theme.preset || 'redemption'}`" :style="style" @focusin="rememberFocus" @pointerdown.capture="detectResize" @keydown="keydown">
     <button v-if="menu.config.closable !== false" class="close" aria-label="Close menu" @click="close">×</button>
     <div class="drag-region" @pointerdown="startDrag">
-      <ElementRenderer v-for="element in inSlot('header')" :key="element.elementId" :element="element" :menu="menu" :page="page" />
+      <template v-for="group in groupedSlot('header')" :key="group.key">
+        <div v-if="group.row" class="element-row" :style="{ '--row-columns': group.elements.length }">
+          <ElementRenderer v-for="element in group.elements" :key="element.elementId" :element="element" :menu="menu" :page="page" />
+        </div>
+        <ElementRenderer v-else :element="group.elements[0]" :menu="menu" :page="page" />
+      </template>
     </div>
     <NavigationBar v-if="menu.navigation" :menu="menu" />
     <main class="content">
-      <ElementRenderer v-for="element in inSlot('content')" :key="element.elementId" :element="element" :menu="menu" :page="page" />
+      <template v-for="group in groupedSlot('content')" :key="group.key">
+        <div v-if="group.row" class="element-row" :style="{ '--row-columns': group.elements.length }">
+          <ElementRenderer v-for="element in group.elements" :key="element.elementId" :element="element" :menu="menu" :page="page" />
+        </div>
+        <ElementRenderer v-else :element="group.elements[0]" :menu="menu" :page="page" />
+      </template>
     </main>
     <footer>
-      <ElementRenderer v-for="element in inSlot('footer')" :key="element.elementId" :element="element" :menu="menu" :page="page" />
+      <template v-for="group in groupedSlot('footer')" :key="group.key">
+        <div v-if="group.row" class="element-row" :style="{ '--row-columns': group.elements.length }">
+          <ElementRenderer v-for="element in group.elements" :key="element.elementId" :element="element" :menu="menu" :page="page" />
+        </div>
+        <ElementRenderer v-else :element="group.elements[0]" :menu="menu" :page="page" />
+      </template>
     </footer>
   </section>
 </template>

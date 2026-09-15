@@ -188,6 +188,10 @@ function MenuValidation.Element(elementType, spec, path)
         or OptionalBoolean(spec, 'disabled', path) or OptionalBoolean(spec, 'persist', path)
     if problem then return problem end
     if spec.slot ~= nil and not slots[spec.slot] then return Err(path .. '.slot', 'must be header, content, or footer.') end
+    if spec.row ~= nil then
+        problem = MenuValidation.Id(spec.row, path .. '.row')
+        if problem then return problem end
+    end
 
     if stringValueTypes[elementType] and spec.value ~= nil then
         local maximum = (elementType == 'textarea' or elementType == 'textdisplay') and 4096 or 512
@@ -408,7 +412,7 @@ function MenuValidation.Element(elementType, spec, path)
     path = path or 'spec'
     local problem = baseElement(elementType, spec, path)
     if problem then return problem end
-    problem = Fields(spec, 'key slot label disabled persist ' .. elementFields[elementType], path)
+    problem = Fields(spec, 'key slot row label disabled persist ' .. elementFields[elementType], path)
     if problem then return problem end
     if spec.sound ~= nil then problem = MenuValidation.Sound(spec.sound, path .. '.sound'); if problem then return problem end end
     for _, key in ipairs({ 'alt', 'text', 'emptyText' }) do problem = OptionalString(spec, key, path, 256); if problem then return problem end end
@@ -473,6 +477,15 @@ function MenuValidation.OpenOptions(spec, closeOnly)
     if spec.pageId ~= nil then problem = MenuValidation.Handle(spec.pageId, 'options.pageId'); if problem then return problem end end
     for _, key in ipairs({ 'keyboard', 'cursor', 'replace' }) do problem = OptionalBoolean(spec, key, 'options'); if problem then return problem end end
     if spec.sound ~= nil then return MenuValidation.Sound(spec.sound, 'options.sound') end
+end
+
+function MenuValidation.FocusOptions(spec)
+    local problem = Fields(spec, 'keyboard cursor', 'options')
+    if problem then return problem end
+    for _, key in ipairs({ 'keyboard', 'cursor' }) do
+        problem = OptionalBoolean(spec, key, 'options')
+        if problem then return problem end
+    end
 end
 
 function MenuValidation.ElementAction(element, event)

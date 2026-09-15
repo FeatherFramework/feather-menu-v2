@@ -21,6 +21,8 @@ local cyclic = {}; cyclic.self = cyclic
 Invalid(MenuValidation.Payload(cyclic, 'spec'), 'invalid_input', 'cyclic payload')
 
 Valid(MenuValidation.Element('button', { key = 'save', label = 'Save' }), 'button')
+Valid(MenuValidation.Element('button', { key = 'save', label = 'Save', row = 'actions' }), 'button row')
+Invalid(MenuValidation.Element('button', { key = 'save', row = 'not valid' }), 'invalid_input', 'invalid row key')
 Invalid(MenuValidation.Element('unknown', { key = 'bad' }), 'unsupported_element', 'unknown element')
 Valid(MenuValidation.Element('toggle', { key = 'pvp', value = true }), 'toggle')
 Invalid(MenuValidation.Element('toggle', { key = 'pvp', value = 'true' }), 'invalid_input', 'toggle value')
@@ -64,6 +66,8 @@ Invalid(MenuValidation.ElementAction({ type = 'toggle', data = { key = 'toggle',
 Invalid(MenuValidation.ElementAction({ type = 'dropdown', data = { key = 'choice', value = 'a', options = { 'a', { value = 'b', disabled = true } } } }, { event = 'change', value = 'b' }), 'invalid_input', 'disabled selection validation')
 Invalid(MenuValidation.ElementAction({ type = 'pagearrows', data = { key = 'pages', current = 1, total = 2 } }, { event = 'previous', value = -1 }), 'invalid_input', 'page boundary validation')
 Invalid(MenuValidation.OpenOptions({ keyboard = 'yes' }), 'invalid_input', 'focus flags are boolean')
+Invalid(MenuValidation.FocusOptions({ keyboard = 'yes' }), 'invalid_input', 'runtime focus flags are boolean')
+Invalid(MenuValidation.FocusOptions({ invented = true }), 'invalid_input', 'runtime focus rejects unknown fields')
 Invalid(MenuValidation.Sound({ action = '', soundset = 'HUD' }, 'sound'), 'invalid_input', 'empty sound identifier')
 -- The Cfx runtime supplies json.encode. This probe verifies the byte gate itself.
 json = { encode = function() return string.rep('x', 65537) end }

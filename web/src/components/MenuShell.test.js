@@ -113,4 +113,16 @@ describe('MenuShell keyboard ownership', () => {
     geometry.mockRestore()
     wrapper.unmount()
   })
+
+  it('places consecutive elements with the same row key side by side', () => {
+    const value = menu()
+    value.pages.selectors.elementOrder = ['month', 'day', 'year']
+    value.pages.selectors.elements = Object.fromEntries(['month', 'day', 'year'].map((id) => [id, {
+      elementId: id, type: 'input', data: { label: id, value: '', row: 'birth-date' },
+    }]))
+    const wrapper = mount(MenuShell, { props: { menu: value } })
+    const row = wrapper.get('.element-row')
+    expect(row.findAll('.element-anchor')).toHaveLength(3)
+    expect(row.attributes('style')).toContain('--row-columns: 3')
+  })
 })

@@ -23,7 +23,8 @@ function step(action) {
 }
 </script>
 <template>
-  <nav :class="['navigation', `navigation-${menu.navigation.type}`]"
+  <nav :class="['navigation', `navigation-${menu.navigation.type}`,
+    { 'navigation-many-steps': menu.navigation.type === 'stepper' && items.length > 6 }]"
     :style="menu.navigation.type === 'stepper' ? { '--step-count': items.length } : undefined"
     :aria-label="menu.navigation.type === 'tabs' ? 'Sections' : 'Progress'">
     <button v-for="(item, index) in items" :key="item.pageId" data-menu-control

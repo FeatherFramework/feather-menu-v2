@@ -2,6 +2,7 @@
 local root = arg[1] or '.'
 local api, nui, events, threads, messages = {}, {}, {}, {}, {}
 local owner, now, paused, focus = 'consumer', 0, false, false
+local disabledGroups = {}
 function GetCurrentResourceName() return 'feather-menu-v2' end
 function GetInvokingResource() return owner end
 function GetGameTimer() return now end
@@ -11,6 +12,8 @@ function RegisterNUICallback(name, fn) nui[name] = fn end
 function AddEventHandler(name, fn) events[name] = fn end
 function SendNUIMessage(message) messages[#messages + 1] = message end
 function SetNuiFocus(keyboard, cursor) focus = keyboard or cursor end
+function SetNuiFocusKeepInput() end
+function DisableAllControlActions(group) disabledGroups[group] = true end
 function PlaySoundFrontend() end
 function IsPauseMenuActive() return paused end
 function Wait(ms) return coroutine.yield(ms) end
@@ -44,6 +47,14 @@ local callback = setmetatable({}, { __call = function() calls = calls + 1 end })
 local element = ok(api.AddElement(menu, page, 'toggle', { key = 'toggle', value = false, persist = false }, callback)).elementId
 ok(api.OpenMenu(menu))
 check(focus, 'open owns focus')
+check(api.IsInputCaptured() == true, 'open menu reports modal input capture')
+local releasedFocus = ok(api.SetMenuFocus(menu, { keyboard = false, cursor = false }))
+check(not focus and not api.IsInputCaptured() and releasedFocus.keyboard == false and releasedFocus.cursor == false,
+    'open menu can remain visible while releasing modal input')
+tick(3)
+check(not disabledGroups[0] and not disabledGroups[1] and not disabledGroups[2], 'released menu focus does not suppress gameplay controls')
+ok(api.SetMenuFocus(menu, { keyboard = true, cursor = true }))
+check(focus and api.IsInputCaptured(), 'open menu can reclaim modal input')
 local action = { menuId = menu, pageId = page, elementId = element, event = 'change', value = 'invalid' }
 check(not request('elementAction', action).ok and calls == 0, 'persist=false still validates values')
 action.value = true
@@ -77,14 +88,14 @@ check(#ok(api.GetMenuState(menu)).pages[1].elements[2].data.options == 1, 'optio
 
 local failing = ok(api.AddElement(menu, page, 'button', { key = 'failing', label = 'Fail' }, function() error('expected fixture failure') end)).elementId
 check(request('elementAction', { menuId = menu, pageId = page, elementId = failing, event = 'activate' }).code == 'callback_failed', 'callback failures return an error without crashing')
-ok(api.CloseMenu(menu)); check(not focus, 'can close after callback failure')
+ok(api.CloseMenu(menu)); check(not focus and api.IsInputCaptured() == false, 'close releases focus and input capture')
 ok(api.OpenMenu(menu))
 local revision = ok(api.GetMenuState(menu)).revision
 check(not request('ack', { menuId = menu, revision = revision + 1 }).ok, 'future acknowledgement rejected')
 check(request('ack', { menuId = menu, revision = revision }).ok, 'current acknowledgement accepted')
 check(ok(api.GetHealth()).pendingAcknowledgements == 0, 'ack clears pending health count')
 
--- The first runtime thread is the readiness warning, second pause, third recovery.
+-- The threads are readiness warning, pause, control suppression, then recovery.
 tick(2); paused = true; tick(2)
 check(not focus, 'pause releases focus')
 ok(api.CloseMenu(menu)); paused = false; tick(2)
@@ -92,8 +103,10 @@ check(not focus and not ok(api.GetMenuState(menu)).open, 'closing a paused menu 
 for _ = 1, 10 do ok(api.OpenMenu(menu)); ok(api.CloseMenu(menu)); check(not focus, 'repeated close releases focus') end
 ok(api.OpenMenu(menu))
 tick(3)
+check(disabledGroups[0] and disabledGroups[1] and disabledGroups[2], 'modal menu suppresses gameplay control groups')
+tick(4)
 local before = #messages
-for _ = 1, 8 do now = now + 2500; tick(3) end
+for _ = 1, 8 do now = now + 2500; tick(4) end
 check(#messages - before == 3, 'lost acknowledgements trigger at most three recovery snapshots')
 events.onClientResourceStop('consumer')
 check(not focus and api.GetMenuState(menu).code == 'not_found', 'owner stop removes menus and focus')

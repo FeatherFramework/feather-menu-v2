@@ -278,11 +278,20 @@ end)).elementId
 | --- | --- | --- |
 | `key` | Required | Unique key within this page. |
 | `slot` | `'content'` | `'header'`, `'content'`, or `'footer'`. |
+| `row` | Omitted | Give consecutive elements the same safe row key to place them side by side at equal widths. Rows stack vertically on narrow menus. |
 | `label` | Omitted | Visible label on elements that display one; at most 256 UTF-8 bytes. |
 | `disabled` | `false` | Prevent interaction. Display-only elements have no interaction to disable. |
 | `persist` | `true` | For `change` events, store the validated value in Lua menu state. With `false`, your callback must accept/reject the proposed value and call `SetElementValue` or `UpdateElement`. |
 
 `persist` does not save to a database. Text/range controls may show a local draft before your callback updates the authoritative value. Activation buttons, image children, and page arrows do not overwrite their definitions from clicks.
+
+Use rows for compact groups such as a date or related actions:
+
+```lua
+Menu:AddElement(menuId, pageId, 'dropdown', { key = 'month', row = 'birthday', label = 'Month', value = 1, options = months })
+Menu:AddElement(menuId, pageId, 'dropdown', { key = 'day', row = 'birthday', label = 'Day', value = 1, options = days })
+Menu:AddElement(menuId, pageId, 'dropdown', { key = 'year', row = 'birthday', label = 'Year', value = 1874, options = years })
+```
 
 Interactive buttons, toggles, checkboxes, choice controls, grids, image controls, and page arrows also accept optional `sound = { action, soundset }`. Input, textarea, number, slider, and display elements do not accept that field. Sound is played by Lua after an accepted interaction and a successful callback.
 
@@ -685,6 +694,8 @@ Pause suspends the open menu and releases focus. Resume restores it when no othe
 
 Gamepads require the host browser to expose a `standard` mapping through the [Gamepad API](https://developer.mozilla.org/en-US/docs/Web/API/Gamepad_API/Using_the_Gamepad_API). Unknown mappings are ignored. Text entry still requires a keyboard; this resource does not provide a virtual keyboard. Live RedM device validation remains a release gate. Set `controller = false` to disable browser-gamepad polling for a menu.
 
+While any Menu v2 menu is open, Menu v2 releases gameplay passthrough and suppresses RedM control groups every frame. This is designed to prevent movement, sprint, inventory, and other gameplay actions from firing underneath a modal NUI while Chromium continues to receive menu-controller input. First-party Admin, Settings, and Inventory hotkeys also query `IsInputCaptured()` before opening a competing interface. Both halves require live RedM/controller verification.
+
 Register a custom ordinary-button shortcut with:
 
 ```lua
@@ -704,11 +715,13 @@ Every row returns the standard result envelope. IDs must belong to the calling r
 | --- | --- |
 | `GetCapabilities()` | Resource/version/contract, readiness state, supported feature contract numbers. |
 | `GetHealth()` | Readiness, `uiReady`, menu count, active ID, pending acknowledgement count. |
+| `IsInputCaptured()` | `true` while any Menu v2 menu owns modal input; this owner-neutral query returns a boolean directly. |
 | `AwaitReady(timeoutMs)` | Wait up to 0–30000ms; returns health or `not_ready`/`timeout`. Call from a yieldable thread. |
 | `CreateMenu(spec)` | `{ menuId }`. |
 | `UpdateMenu(menuId, changes)` | `{ revision }`. Updates mutable configuration. |
 | `GetMenuState(menuId)` | Defensive snapshot: config, pages/elements, revision, open state, active page, navigation and keys. |
 | `OpenMenu(menuId, options?)` | `{ menuId, pageId }`. |
+| `SetMenuFocus(menuId, options)` | `{ keyboard, cursor }`; changes input ownership without hiding the active menu. |
 | `CloseMenu(menuId, options?)` | `{ menuId }`. Safe to repeat for an existing closed menu. |
 | `DestroyMenu(menuId)` | `{ destroyed = true }`; removes definition, callbacks, UI state and focus. A later call returns `not_found`. |
 | `DestroyOwnedMenus()` | `{ removed }`; removes all menus belonging to your resource. |
