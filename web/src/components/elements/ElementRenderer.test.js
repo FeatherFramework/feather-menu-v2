@@ -16,6 +16,11 @@ const mountElement = (type, data, elementId = type) => mount(ElementRenderer, {
 describe('ElementRenderer interactions', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  it('renders whole slider values with an explicit decimal place', () => {
+    const wrapper = mountElement('slider', { label: 'Camera FOV', value: 50, min: 10, max: 80, step: 0.25 })
+    expect(wrapper.get('output').text()).toBe('50.0')
+  })
+
   it('emits an activation from a button', async () => {
     const wrapper = mountElement('button', { label: 'Save', value: 'save' })
     await wrapper.get('button').trigger('click')

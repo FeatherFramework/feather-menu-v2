@@ -42,6 +42,11 @@
       value = Number(data.value.value ?? min);
     return max === min ? 100 : Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
   });
+  const sliderDisplay = computed(() => {
+    const value = Number(localValue.value);
+    if (!Number.isFinite(value)) return '';
+    return Number.isInteger(value) ? value.toFixed(1) : String(value);
+  });
 
   async function emit(event = "activate", value = localValue.value, meta) {
     const sequence = ++commitSequence;
@@ -168,7 +173,7 @@
 
     <label v-else-if="element.type === 'slider'" class="field">
       <span
-        >{{ data.label }} <output>{{ localValue }}</output></span
+        >{{ data.label }} <output>{{ sliderDisplay }}</output></span
       >
       <input
         data-menu-control
