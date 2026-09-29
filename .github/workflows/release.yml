@@ -3,11 +3,6 @@ name: release
 on:
   push:
     branches: [main]
-    tags: ['v2.*']
-  workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   package:
@@ -49,7 +44,6 @@ jobs:
             feather-menu-v2.zip.sha256
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v2.')
     needs: package
     runs-on: ubuntu-latest
     permissions:
@@ -59,17 +53,25 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: feather-menu-v2-install
-      - name: Publish tested tag artifact without replacing existing assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+      - name: Read package version
+        id: package-version
+        uses: martinbeentjes/npm-get-version-action@main
+        with:
+          path: web
+      - name: Verify release version and checksum
         shell: bash
         run: |
           set -euo pipefail
           version=$(node -p "require('./web/package.json').version")
-          test "$TAG" = "v$version"
           grep -Fq "version '$version'" fxmanifest.lua
           sha256sum -c feather-menu-v2.zip.sha256
-          flags=()
-          if [[ "$version" == *-* ]]; then flags+=(--prerelease --latest=false); fi
-          gh release create "$TAG" feather-menu-v2.zip feather-menu-v2.zip.sha256 --verify-tag --title "Feather Menu v2 $version" --generate-notes "${flags[@]}"
+      - name: Publish automatic release
+        uses: marvinpinto/action-automatic-releases@latest
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          automatic_release_tag: v${{ steps.package-version.outputs.current-version }}
+          prerelease: ${{ contains(steps.package-version.outputs.current-version, '-') }}
+          title: Feather Menu v2 ${{ steps.package-version.outputs.current-version }}
+          files: |
+            feather-menu-v2.zip
+            feather-menu-v2.zip.sha256

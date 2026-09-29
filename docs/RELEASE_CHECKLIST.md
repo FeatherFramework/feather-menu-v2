@@ -6,7 +6,7 @@
 - Required renderer parity, tabs, stepper, and the initial RedM fixture were completed on the maintainer's main PC. Commit `131a775` is the work-PC starting point.
 - Work-PC hardening adds exact field allowlists, bounded style/assets/sounds, encoded budgets, callback and navigation validation, replacement arrays, acknowledgements with three bounded retries, pause-close cancellation, and standard browser-gamepad routing.
 - The README is the complete beginner-facing element/configuration/API reference. It includes a runnable starter, callback examples, migration guidance, and restart rebuilding.
-- Packaging now checks an actual flat install ZIP, referenced assets, absence of frontend source, the 256 KiB raw UI budget, and exclusion of the development fixture. Main builds artifacts; explicit matching version tags publish without overwriting assets.
+- Packaging checks an actual flat install ZIP, referenced assets, absence of frontend source, the 256 KiB raw UI budget, and exclusion of the development fixture. Pushes to `main` build, verify, and automatically publish the package version without requiring contributors to create Git tags.
 - Local and GitHub packaging share one runtime file allowlist: `fxmanifest.lua`, the three manifest-loaded client Lua files, `ui/index.html`, and its referenced compiled JS/CSS assets. Documentation/README, tests, scripts, repository metadata and `.artifacts` are excluded. Verification rejects any extra file or directory, including stale/unreferenced assets. Checksums remain beside the ZIP.
 
 ## Automated commands

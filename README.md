@@ -802,7 +802,7 @@ lua tests/lua/runtime_spec.lua .
 
 The runtime suite stubs Cfx to test ownership, validation, atomic batches, callable callbacks, failure handling, acknowledgements, focus, pause cancellation, and cleanup. It does not replace live RedM tests.
 
-Main pushes/manual runs build a downloadable CI install artifact. Publishing requires an explicit `v2.*` tag matching the package and manifest versions; existing release assets are not silently replaced. The ZIP contains runtime files directly at its root, including compiled assets; its SHA-256 checksum is provided separately. Extract it into a folder named `feather-menu-v2`. Verify the actual archive with `python scripts/verify_release.py feather-menu-v2.zip`.
+Pushes to `main` validate the resource, build a downloadable install artifact, and automatically publish the version declared in `web/package.json`; contributors do not create or push release tags manually. Alpha and other hyphenated versions are published as prereleases. The workflow verifies that the package and manifest versions match before publishing. The ZIP contains runtime files directly at its root, including compiled assets; its SHA-256 checksum is provided separately. Extract it into a folder named `feather-menu-v2`. Verify the actual archive with `python scripts/verify_release.py feather-menu-v2.zip`.
 
 To make the same runtime-only ZIP locally after building, run `python scripts/package_release.py` from the repository root. It writes `.artifacts/feather-menu-v2.zip` and its checksum; then run `python scripts/verify_release.py .artifacts/feather-menu-v2.zip`.
 
