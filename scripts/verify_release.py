@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 
 def runtime_files(root):
     required = {
-        'fxmanifest.lua', 'client/results.lua', 'client/validation.lua',
+        'LICENSE', 'fxmanifest.lua', 'client/results.lua', 'client/validation.lua',
         'client/main.lua', 'ui/index.html',
     }
     entry = (root / 'ui/index.html').read_text(encoding='utf-8')
@@ -32,6 +32,9 @@ def verify(root):
         else:
             actual.add(relative)
     assert actual == required, f'Runtime file mismatch; extra={sorted(actual - required)}, missing={sorted(required - actual)}'
+    license_text = (root / 'LICENSE').read_text(encoding='utf-8')
+    assert 'GNU GENERAL PUBLIC LICENSE' in license_text and 'Version 3, 29 June 2007' in license_text, 'Missing GPL v3 license text'
+    assert 'END OF TERMS AND CONDITIONS' in license_text, 'Incomplete GPL v3 license text'
     manifest = (root / "fxmanifest.lua").read_text(encoding="utf-8")
     assert "ui_page 'ui/index.html'" in manifest, "Manifest must load ui/index.html"
     assert "server_scripts" not in manifest, "Menu is a client-only resource"
@@ -61,7 +64,7 @@ def main():
             for entry in archive.infolist():
                 path = PurePosixPath(entry.filename)
                 assert not path.is_absolute() and ".." not in path.parts and "\\" not in entry.filename, "Unsafe ZIP path"
-                assert path.parts and path.parts[0] in {'fxmanifest.lua', 'client', 'ui'}, "ZIP must contain runtime files directly at its root"
+                assert path.parts and path.parts[0] in {'LICENSE', 'fxmanifest.lua', 'client', 'ui'}, "ZIP must contain runtime files directly at its root"
             archive.extractall(temporary)
             verify(Path(temporary))
     print("PASS runtime artifact layout, assets, boundary, and bundle budget")
