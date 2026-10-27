@@ -542,7 +542,7 @@ RegisterNUICallback('elementAction', function(data, cb)
     local page = menu and menu.pages[data.pageId] or nil
     local element = page and page.elements[data.elementId] or nil
     if not menu or not menu.open or menu.activePageId ~= data.pageId or not element then cb({ ok = false }); return end
-    if element.public.data.disabled == true then cb({ ok = false }); return end
+    if element.public.data.disabled == true or element.public.data.busy == true then cb({ ok = false }); return end
     local invalid = MenuValidation.ElementAction(element.public, data)
     if invalid then cb(invalid); return end
     if data.revision ~= nil and data.revision ~= menu.revision then Sync(menu); cb({ ok = false, code = 'conflict' }); return end

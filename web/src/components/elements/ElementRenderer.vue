@@ -11,6 +11,20 @@
   const data = computed(() => props.element.data || {});
   const pageUi = inject('menuPageUi', null);
   const draftKey = JSON.stringify([props.page.pageId, props.element.elementId]);
+  const confirmAction = inject('menuConfirm', null);
+  const reportBusy = inject('menuBusy', null);
+  const pending = ref(false);
+  watch(() => pending.value || data.value.busy === true, (busy) => reportBusy?.(draftKey, busy), { immediate: true });
+  onBeforeUnmount(() => reportBusy?.(draftKey, false));
+  async function activateButton() {
+    if (pending.value || data.value.busy || data.value.disabled) return;
+    pending.value = true;
+    try {
+      if (data.value.confirm && (!confirmAction || !await confirmAction(data.value.confirm))) return;
+      if (data.value.disabled || data.value.busy) return;
+      await emit('activate', data.value.value);
+    } finally { pending.value = false; }
+  }
   const savedDraft = pageUi?.drafts.get(draftKey);
   const initialValue = savedDraft && JSON.stringify(savedDraft.base) === JSON.stringify(data.value.value)
     ? savedDraft.value : data.value.value ?? (['number', 'slider'].includes(props.element.type) ? data.value.min ?? 0 : '');
@@ -128,7 +142,7 @@
 </script>
 
 <template>
-  <div class="element-anchor" :data-element-id="element.elementId">
+  <div class="element-anchor" :class="{ 'button-element': element.type === 'button' }" :data-element-id="element.elementId">
     <h1 v-if="element.type === 'header'" class="heading">{{ data.value }}</h1>
     <h2 v-else-if="element.type === 'subheader'" class="subheading">{{ data.value }}</h2>
     <hr v-else-if="element.type === 'line'" class="line" />
@@ -140,10 +154,12 @@
       v-else-if="element.type === 'button'"
       data-menu-control
       class="control button"
-      :disabled="data.disabled"
-      @click="emit('activate', data.value)"
+      :class="{ 'is-busy': pending || data.busy }"
+      :aria-busy="pending || data.busy || undefined"
+      :disabled="data.disabled || pending || data.busy"
+      @click="activateButton"
     >
-      {{ data.label }}
+      {{ data.busy && data.busyLabel ? data.busyLabel : data.label }}
     </button>
 
     <label v-else-if="element.type === 'input' || element.type === 'number'" class="field">
@@ -159,10 +175,13 @@
         :max="element.type === 'number' ? data.max ?? 100 : undefined"
         :step="element.type === 'number' ? data.step ?? 1 : undefined"
         :maxlength="data.maxLength"
+        :aria-invalid="data.error ? true : undefined"
+        :aria-describedby="data.error ? `${element.elementId}-error` : undefined"
         :aria-label="data.label || data.placeholder || (element.type === 'number' ? 'Number' : 'Text')"
         @input="localValue = element.type === 'number' ? $event.target.valueAsNumber : $event.target.value"
         @change="element.type === 'number' ? commitNumber($event) : emit('change')"
       />
+      <span v-if="data.error" :id="`${element.elementId}-error`" class="field-error" role="alert">{{ data.error }}</span>
     </label>
 
     <label v-else-if="element.type === 'textarea'" class="field">
@@ -175,10 +194,13 @@
         :placeholder="data.placeholder"
         :disabled="data.disabled"
         :maxlength="data.maxLength"
+        :aria-invalid="data.error ? true : undefined"
+        :aria-describedby="data.error ? `${element.elementId}-error` : undefined"
         :aria-label="data.label || data.placeholder || 'Text'"
         @input="localValue = $event.target.value"
         @change="emit('change')"
       />
+      <span v-if="data.error" :id="`${element.elementId}-error`" class="field-error" role="alert">{{ data.error }}</span>
     </label>
 
     <label v-else-if="element.type === 'slider'" class="field">

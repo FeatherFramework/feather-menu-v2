@@ -17,6 +17,10 @@ def runtime_files(root):
     for asset in assets:
         assert re.fullmatch(r'\./assets/[A-Za-z0-9_.-]+\.(?:js|css)', asset), f'Unexpected entry asset: {asset}'
         required.add('ui/' + asset.removeprefix('./'))
+        if asset.endswith('.css'):
+            css = (root / 'ui' / asset.removeprefix('./')).read_text(encoding='utf-8')
+            for font in re.findall(r'url\([\"\']?(\./[A-Za-z0-9_.-]+\.(?:ttf|woff2))[\"\']?\)', css):
+                required.add('ui/assets/' + font.removeprefix('./'))
     return required
 
 
@@ -47,7 +51,9 @@ def verify(root):
         assert (root / "ui" / asset).is_file(), f"Missing entry asset {asset}"
     assert not re.search(r'(?:src|href)="(?:https?://|/assets)', entry), "Non-relative entry asset"
     runtime_assets = list((root / "ui/assets").glob("*"))
-    assert sum(file.stat().st_size for file in runtime_assets if file.is_file()) <= 262144, "Compiled UI exceeds 256 KiB raw budget"
+    assert sum(file.stat().st_size for file in runtime_assets if file.suffix in {'.js', '.css'}) <= 262144, "Compiled UI code exceeds 256 KiB raw budget"
+    fonts = [file for file in runtime_assets if file.suffix in {'.ttf', '.woff2'}]
+    assert len(fonts) == 8 and sum(file.stat().st_size for file in fonts) <= 2097152, 'Bundled fonts exceed count/2 MiB budget'
     for file in runtime_assets:
         if file.suffix == ".js":
             assert "fixture:showcase" not in file.read_text(encoding="utf-8"), "Development fixture leaked into production"

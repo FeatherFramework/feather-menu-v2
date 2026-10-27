@@ -7,6 +7,46 @@ import { controls, startGamepad } from '../input'
 
 const props = defineProps({ menu: { type: Object, required: true } })
 const shell = ref(null)
+const busyActions = ref(new Set())
+const showBusy = ref(false)
+let busyTimer
+provide('menuBusy', (key, busy) => {
+  if (busy) busyActions.value.add(key)
+  else busyActions.value.delete(key)
+})
+watch(() => busyActions.value.size > 0, (busy) => {
+  clearTimeout(busyTimer)
+  if (!busy) showBusy.value = false
+  else busyTimer = setTimeout(() => { showBusy.value = true }, 250)
+})
+const confirmation = ref(null)
+const confirmPanel = ref(null)
+let confirmResolve, confirmFocus
+function finishConfirmation(accepted) {
+  const resolve = confirmResolve
+  confirmResolve = null
+  confirmation.value = null
+  resolve?.(accepted)
+  nextTick(() => { if (confirmFocus?.isConnected) confirmFocus.focus() })
+}
+provide('menuConfirm', async (spec) => {
+  if (confirmation.value) return false
+  confirmFocus = document.activeElement
+  confirmation.value = spec
+  const result = new Promise((resolve) => { confirmResolve = resolve })
+  await nextTick()
+  confirmPanel.value?.querySelector('[data-menu-control]')?.focus()
+  return result
+})
+function confirmationKey(event) {
+  if (event.key === 'Escape') { event.preventDefault(); finishConfirmation(false); return }
+  if (['Tab', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+    const available = controls(confirmPanel.value)
+    const direction = event.shiftKey || event.key === 'ArrowUp' ? -1 : 1
+    available[(available.indexOf(document.activeElement) + direction + available.length) % available.length]?.focus()
+    event.preventDefault()
+  }
+}
 const pageUi = { drafts: new Map(), pages: new Map() }
 const openSections = ref({})
 provide('menuPageUi', pageUi)
@@ -52,17 +92,24 @@ function sectionOpen(element) {
   const key = `${props.menu.activePageId}/${element.elementId}`
   return openSections.value[key] ?? element.data.value === true
 }
-function toggleSection(element) {
+async function toggleSection(element) {
   const key = `${props.menu.activePageId}/${element.elementId}`
-  openSections.value[key] = !sectionOpen(element)
+  const value = !sectionOpen(element)
+  openSections.value[key] = value
+  if (element.data.notify === true) {
+    const result = await post('elementAction', { menuId: props.menu.menuId, pageId: props.menu.activePageId, elementId: element.elementId, event: 'change', value })
+    if (result?.ok === false) openSections.value[key] = element.data.value === true
+  }
 }
 const theme = computed(() => props.menu.config.theme || {})
 const size = computed(() => props.menu.config.size || {})
 const resizeEnabled = computed(() => props.menu.config.resizable === true)
-const topLeftAnchored = computed(() => position.value?.anchor === 'top-left')
+const left = computed(() => position.value?.left || props.menu.config.position?.x || '50%')
+const top = computed(() => position.value?.top || props.menu.config.position?.y || '50%')
+const topLeftAnchored = computed(() => (position.value?.anchor || props.menu.config.position?.anchor) === 'top-left')
 const style = computed(() => ({
-  left: position.value?.left || props.menu.config.position?.x || '50%',
-  top: position.value?.top || props.menu.config.position?.y || '50%',
+  left: left.value,
+  top: top.value,
   transform: topLeftAnchored.value ? 'none' : 'translate(-50%, -50%)',
   width: resizeEnabled.value && dimensions.value?.width
     ? dimensions.value.width
@@ -70,11 +117,11 @@ const style = computed(() => ({
   height: resizeEnabled.value && dimensions.value?.height ? dimensions.value.height : (size.value.height || 'auto'),
   minWidth: size.value.minWidth || '18rem',
   maxWidth: topLeftAnchored.value
-    ? `min(${size.value.maxWidth || '90vw'}, calc(100vw - ${position.value.left}))`
+    ? `min(${size.value.maxWidth || '90vw'}, calc(100vw - ${left.value}))`
     : (size.value.maxWidth || '90vw'),
   minHeight: size.value.minHeight || 'auto',
   maxHeight: topLeftAnchored.value
-    ? `min(${size.value.maxHeight || '85vh'}, calc(100vh - ${position.value.top}))`
+    ? `min(${size.value.maxHeight || '85vh'}, calc(100vh - ${top.value}))`
     : (size.value.maxHeight || '85vh'),
   resize: resizeEnabled.value ? 'both' : 'none',
   '--fm-accent': theme.value.accent || '#a73732',
@@ -83,7 +130,7 @@ const style = computed(() => ({
   '--fm-text': theme.value.text || '#f6eee3',
   '--fm-muted': theme.value.muted || '#c8b9a5',
   '--fm-radius': theme.value.radius || '8px',
-  '--fm-font': theme.value.fontFamily || 'Georgia, serif',
+  '--fm-font': theme.value.fontFamily === 'rdr' ? 'RDRLino, Georgia, serif' : (theme.value.fontFamily || 'RDRLino, Georgia, serif'),
   '--fm-width-720': size.value.breakpoints?.['720'] || size.value.width || '28rem',
   '--fm-width-1080': size.value.breakpoints?.['1080'] || size.value.width || '32rem',
   '--fm-width-1440': size.value.breakpoints?.['1440'] || size.value.width || '36rem',
@@ -168,6 +215,7 @@ function keydown(event) {
 }
 
 watch(() => props.menu.activePageId, async (pageId, previousPageId) => {
+  if (confirmation.value) finishConfirmation(false)
   if (previousPageId && shell.value) {
     pageUi.pages.set(previousPageId, {
       ...pageUi.pages.get(previousPageId),
@@ -190,7 +238,7 @@ watch(() => props.menu.revision, async () => {
   for (const id of pageUi.pages.keys()) if (!props.menu.pages[id]) pageUi.pages.delete(id)
 })
 onMounted(() => {
-  stopGamepad = startGamepad(() => props.menu.config.controller === false ? null : shell.value)
+  stopGamepad = startGamepad(() => props.menu.config.controller === false ? null : (confirmation.value ? confirmPanel.value : shell.value))
   if (props.menu.config.persistPosition !== false) {
     try { position.value = JSON.parse(localStorage.getItem(`feather-menu-v2:${props.menu.menuId}:position`)) || undefined } catch { /* ignore invalid local state */ }
   }
@@ -203,11 +251,12 @@ onMounted(() => {
     shell.value?.querySelector('[data-menu-control]:not([disabled])')?.focus()
   })
 })
-onUnmounted(() => { stopGamepad?.(); window.removeEventListener('pointermove', moveDrag); window.removeEventListener('pointerup', stopPointer) })
+onUnmounted(() => { clearTimeout(busyTimer); finishConfirmation(false); stopGamepad?.(); window.removeEventListener('pointermove', moveDrag); window.removeEventListener('pointerup', stopPointer) })
 </script>
 
 <template>
-  <section ref="shell" class="menu-shell" role="dialog" aria-label="Menu" aria-modal="true" :class="`theme-${theme.preset || 'redemption'}`" :style="style" @focusin="rememberFocus" @pointerdown.capture="detectResize" @keydown="keydown">
+  <section ref="shell" :inert="confirmation ? true : undefined" class="menu-shell" role="dialog" aria-label="Menu" aria-modal="true" :class="`theme-${theme.preset || 'redemption'}`" :style="style" @focusin="rememberFocus" @pointerdown.capture="detectResize" @keydown="keydown">
+    <span v-if="showBusy" class="menu-busy" :class="{ 'without-close': menu.config.closable === false }" role="status" aria-busy="true"><span class="busy-indicator" aria-hidden="true" /></span>
     <button v-if="menu.config.closable !== false" class="close" aria-label="Close menu" @click="close">×</button>
     <div class="drag-region" @pointerdown="startDrag">
       <template v-for="group in groupedSlot('header')" :key="group.key">
@@ -221,8 +270,8 @@ onUnmounted(() => { stopGamepad?.(); window.removeEventListener('pointermove', m
     <main class="content">
       <template v-for="group in contentGroups()" :key="group.key">
         <section v-if="group.accordion" class="accordion" :data-element-id="group.accordion.elementId">
-          <button class="accordion-trigger" type="button" data-menu-control :disabled="group.accordion.data.disabled" :aria-expanded="sectionOpen(group.accordion)" :aria-controls="`accordion-${group.accordion.elementId}`" @click="toggleSection(group.accordion)">
-            <span>{{ group.accordion.data.label }}</span>
+          <button class="accordion-trigger" :class="{ 'label-centered': group.accordion.data.labelAlign === 'center' }" type="button" data-menu-control :disabled="group.accordion.data.disabled" :aria-current="group.accordion.data.selected ? 'true' : undefined" :aria-expanded="sectionOpen(group.accordion)" :aria-controls="`accordion-${group.accordion.elementId}`" @click="toggleSection(group.accordion)">
+            <span><span v-if="group.accordion.data.selected" class="selection-marker" aria-hidden="true">&lt;</span>{{ group.accordion.data.label }}<span v-if="group.accordion.data.selected" class="selection-marker" aria-hidden="true">&gt;</span></span>
             <span aria-hidden="true">{{ sectionOpen(group.accordion) ? '▾' : '▸' }}</span>
           </button>
           <div :id="`accordion-${group.accordion.elementId}`" class="accordion-panel" :hidden="!sectionOpen(group.accordion)">
@@ -248,5 +297,17 @@ onUnmounted(() => { stopGamepad?.(); window.removeEventListener('pointermove', m
         <ElementRenderer v-else :element="group.elements[0]" :menu="menu" :page="page" />
       </template>
     </footer>
+  <Teleport to="#overlay-root">
+    <div v-if="confirmation" class="confirmation-backdrop">
+      <section ref="confirmPanel" class="confirmation-dialog" role="alertdialog" aria-modal="true" :aria-labelledby="`${menu.menuId}-confirm-title`" :aria-describedby="`${menu.menuId}-confirm-message`" :style="style" @keydown.stop="confirmationKey">
+        <h2 :id="`${menu.menuId}-confirm-title`">{{ confirmation.title }}</h2>
+        <p :id="`${menu.menuId}-confirm-message`">{{ confirmation.message }}</p>
+        <div class="element-row" style="--row-columns: 2">
+          <button class="control button" data-menu-control @click="finishConfirmation(false)">{{ confirmation.cancelLabel }}</button>
+          <button class="control button" data-menu-control @click="finishConfirmation(true)">{{ confirmation.confirmLabel }}</button>
+        </div>
+      </section>
+    </div>
+  </Teleport>
   </section>
 </template>

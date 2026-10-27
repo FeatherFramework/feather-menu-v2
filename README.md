@@ -193,7 +193,8 @@ Pass these fields to `CreateMenu`. Use `UpdateMenu(menuId, changes)` to change m
 | `persistPosition` | `true` | Remember dragged position locally across closes. |
 | `persistSize` | `true` | Remember resized dimensions across closes when resizing is enabled. |
 | `controller` | `true` | Enable standard browser-gamepad routing when available. |
-| `position` | `{ x = '50%', y = '50%' }` | Center point of the window; fields `x`, `y`. |
+| `position` | `{ x = '50%', y = '50%' }` | Initial position for any resource; `x`/`y` use the selected `anchor`. |
+| `position.anchor` | `'center'` | Use `'top-left'` to interpret `x`/`y` as top/left edges, e.g. `{ x = '3%', y = '3%', anchor = 'top-left' }`. The edge stays fixed when content height changes. |
 | `size` | See below | Window dimensions and responsive widths. |
 | `theme` | Redemption colors | The documented local theme tokens below. |
 | `focus` | `{ keyboard = true, cursor = true }` | Defaults for the next `OpenMenu` call. |
@@ -201,6 +202,21 @@ Pass these fields to `CreateMenu`. Use `UpdateMenu(menuId, changes)` to change m
 Remembered position/size is browser-local presentation state, not database persistence. Explicit menu destruction and owner-stop cleanup clear the stored values when NUI receives the destroy message. Turning a persistence flag off stops reuse; it does not erase previously stored values. It is not intended as a cross-session user-settings store.
 
 ### Size and position
+
+Any resource can set an edge anchor when initializing its menu:
+
+```lua
+exports['feather-menu-v2']:CreateMenu({
+    key = 'my-menu',
+    position = { x = '3%', y = '3%', anchor = 'top-left' },
+    persistPosition = false, -- Always reopen at the configured location.
+})
+```
+
+Omit `anchor` (or use `'center'`) to retain centered positioning. Use
+`persistPosition = true` to let a saved drag position override the configured
+initial location. Top-left anchoring prevents content expansion from shifting
+the menu's top edge; dragging remains separately controlled by `draggable`.
 
 Lengths are strings with units: `'420px'`, `'32rem'`, `'80%'`, `'90vw'`, or `'85vh'`. `rem` follows the UI font size; `vw` and `vh` are percentages of viewport width and height. Numbers must be non-negative, up to 8192px, 512rem, or 100 for %, vw, and vh. Raw CSS expressions such as `calc(...)` are excluded.
 
@@ -241,7 +257,9 @@ Require(Menu:UpdateMenu(menuId, {
 | `text` | `'#f6eee3'` | Primary text. |
 | `muted` | `'#c8b9a5'` | Secondary text. |
 | `radius` | `'8px'` | Corner radius using the bounded length format. |
-| `fontFamily` | `'Georgia, serif'` | Also accepts `'Arial, sans-serif'` or `'monospace'`. |
+| `fontFamily` | `'rdr'` (RDRLino) | System override: `'Georgia, serif'`. System stacks: `'Arial, sans-serif'`, `'monospace'`. Bundled fonts: `'rdr'` (alias for `'RDRLino'`), `'RDRLino'`, `'RDRGothica'`, `'RDRCatalogueBold'`, `'HapnaSlabSerif'`, `'Redemption'`, `'WWI'`, `'Cherolina'`, `'AncientAd'`. |
+
+Choose a font per menu through `theme = { fontFamily = 'rdr' }` in CreateMenu or UpdateMenu. The default is RDRLino, matching legacy Feather Menu. All eight bundled font files come unchanged from legacy Feather Menu (including their embedded notices); they load locally without remote requests. RDRLino uses its WOFF2 file to avoid packaging duplicate formats. Ordinary action buttons receive consistent vertical spacing in content, sections, rows and footers; resources do not need spacer elements between them. The release verifier limits compiled JS/CSS to 256 KiB and the eight fonts to 2 MiB separately.
 
 Colors accept hex (`#abc`, `#abcd`, `#aabbcc`, `#aabbccdd`), `rgb(r, g, b)`, `rgba(r, g, b, a)`, `transparent`, `black`, or `white`. RGB channels are integers 0–255; alpha is 0–1. Remote fonts, arbitrary stylesheets, and CSS URLs are excluded.
 
@@ -294,7 +312,7 @@ Menu:AddElement(menuId, pageId, 'dropdown', { key = 'day', row = 'birthday', lab
 Menu:AddElement(menuId, pageId, 'dropdown', { key = 'year', row = 'birthday', label = 'Year', value = 1874, options = years })
 ```
 
-Use an accordion to tuck optional controls away without resetting their values. `value = false` starts collapsed; opening and closing is local UI state and does not invoke a callback.
+Use an accordion to tuck optional controls away without resetting their values. `value = false` starts collapsed; opening and closing is local UI state by default. Set `notify = true` to send the normal `change` callback with a boolean open value (persisted unless `persist = false`). Optional `labelAlign = 'center'` centers the label with its arrow at the right; the default is `'left'`.
 
 ```lua
 Menu:AddElement(menuId, pageId, 'accordion', { key = 'fine-tune', label = 'Fine tune', value = false })
@@ -829,3 +847,41 @@ Pushes to `main` validate the resource, build a downloadable install artifact, a
 To make the same runtime-only ZIP locally after building, run `python scripts/package_release.py` from the repository root. It writes `.artifacts/feather-menu-v2.zip` and its checksum; then run `python scripts/verify_release.py .artifacts/feather-menu-v2.zip`.
 
 See [Contract 1](docs/CONTRACT_1.md), [feature parity](docs/FEATURE_PARITY.md), and [release verification](docs/RELEASE_CHECKLIST.md) for maintainer details. No sibling test resource is assumed to be present in this checkout.
+
+## Action feedback, field errors and confirmations
+
+Ordinary buttons use the native held-down pressed state and return directly to
+their hover/focus state on release; no delayed click flash is applied. They reject repeat activation while their NUI acknowledgement is outstanding.
+A shared spinner beside the close X appears only after 250 ms of continuous busy
+work, avoiding flashes on normal clicks. Without a close X it uses the same corner. For longer resource work, use UpdateElement with
+`busy = true`, then clear it or replace the page when the operation completes.
+`busyLabel` is optional localized text such as "Saving..."; otherwise the normal
+label remains. Busy buttons also reject activation at the Lua boundary. Expandable section headers and arrow
+selectors/page arrows have hover and pressed feedback without using game-font glyphs.
+Reduced-motion preferences disable movement/spinner animation.
+
+Text inputs, textareas and number fields accept `error = 'localized message'`
+(up to 512 UTF-8 bytes). The message appears below the field with `role=alert`,
+`aria-invalid` and an associated description. Clear with `error = ''`. Consumers
+own validation and localization through the player's settings language.
+
+Buttons can request a confirmation before their normal callback runs:
+
+```lua
+Add('button', {
+    key = 'sell', label = translatedSell,
+    confirm = {
+        title = translatedTitle, message = translatedMessage,
+        confirmLabel = translatedConfirm, cancelLabel = translatedCancel,
+    },
+}, onSell)
+```
+
+Each confirmation string is required (1-512 UTF-8 bytes). Text is rendered as text,
+not HTML. Cancel has initial focus; keyboard/controller navigation stays in the
+dialog. Escape, page exit and menu destruction cancel without invoking the action.
+The underlying menu is inert while confirming. Confirmation is UI intent only;
+consumers still enforce permissions, revisions and transaction rules on the server.
+No destructive behavior is attached automatically to existing resource buttons.
+
+Accordion `selected = true` adds separate muted-color `< >` markers around the plain text label and sets `aria-current`. It does not expand the section or allow HTML in labels. Marker color follows `theme.muted`, matching subheadings.

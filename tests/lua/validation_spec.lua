@@ -13,6 +13,9 @@ local function Invalid(result, code, label)
 end
 
 Valid(MenuValidation.Menu({ key = 'settings', draggable = true, resizable = false }, 'spec', true), 'valid menu')
+Valid(MenuValidation.Menu({key='anchored',position={x='3%',y='3%',anchor='top-left'}},'spec',true),'top-left placement')
+Valid(MenuValidation.Menu({key='centered',position={anchor='center'}},'spec',true),'explicit centered placement')
+Invalid(MenuValidation.Menu({key='bad-anchor',position={anchor='bottom-right'}},'spec',true),'invalid_input','unsupported anchor')
 Invalid(MenuValidation.Menu({ key = 'bad key' }, 'spec', true), 'invalid_input', 'unsafe menu key')
 Invalid(MenuValidation.Menu({ key = 'menu', draggable = 'yes' }, 'spec', true), 'invalid_input', 'menu boolean')
 Invalid(MenuValidation.Payload({ callback = function() end }, 'spec'), 'invalid_input', 'function payload')
@@ -56,6 +59,10 @@ Invalid(MenuValidation.Navigation({ type = 'tabs', pages = {
 
 Invalid(MenuValidation.Menu({ key = 'menu', dragable = true }, 'spec', true), 'invalid_input', 'unknown menu field')
 Invalid(MenuValidation.Menu({ key = 'menu', theme = { background = 'url(https://example.com)' } }, 'spec', true), 'invalid_input', 'CSS asset injection')
+for _,font in ipairs({'rdr','RDRLino','RDRGothica','RDRCatalogueBold','HapnaSlabSerif','Redemption','WWI','Cherolina','AncientAd'}) do
+    Valid(MenuValidation.Menu({key='font-menu',theme={fontFamily=font}},'spec',true),'bundled font '..font)
+end
+Invalid(MenuValidation.Menu({key='font-menu',theme={fontFamily='url(https://example.com/font.ttf)'}},'spec',true),'invalid_input','remote font rejected')
 Valid(MenuValidation.Menu({ key = 'menu', size = { width = '32rem', breakpoints = { ['720'] = '25rem' } }, theme = { background = 'rgba(22, 17, 14, .96)' } }, 'spec', true), 'bounded style tokens')
 Invalid(MenuValidation.Element('imagebox', { key = 'image', image = 'https://example.com/image.png' }), 'invalid_input', 'remote image rejected')
 Valid(MenuValidation.Element('imagebox', { key = 'image', image = 'https://cfx-nui-my-resource/images/icon.png' }), 'local Cfx image')
@@ -80,6 +87,16 @@ Invalid(MenuValidation.OpenOptions({ keyboard = 'yes' }), 'invalid_input', 'focu
 Invalid(MenuValidation.FocusOptions({ keyboard = 'yes' }), 'invalid_input', 'runtime focus flags are boolean')
 Invalid(MenuValidation.FocusOptions({ invented = true }), 'invalid_input', 'runtime focus rejects unknown fields')
 Invalid(MenuValidation.Sound({ action = '', soundset = 'HUD' }, 'sound'), 'invalid_input', 'empty sound identifier')
+Valid(MenuValidation.Element('accordion', { key='horse', label='Morgan', value=false, labelAlign='center', notify=true }), 'centered notifying section')
+Invalid(MenuValidation.Element('accordion', { key='horse', label='Morgan', labelAlign='right' }), 'invalid_input', 'bounded alignment')
+Invalid(MenuValidation.Element('accordion', { key='horse', label='Morgan', notify='yes' }), 'invalid_input', 'notify boolean')
+Valid(MenuValidation.ElementAction({type='accordion',data={key='horse',label='Morgan',value=false,notify=true}}, {event='change',value=true}), 'accordion change callback')
+Valid(MenuValidation.Element('button',{key='save',busy=true,busyLabel='Saving',confirm={title='Delete?',message='Cannot undo',confirmLabel='Delete',cancelLabel='Cancel'}}), 'busy and confirmation options')
+Invalid(MenuValidation.Element('button',{key='save',busy='yes'}),'invalid_input','busy boolean')
+Invalid(MenuValidation.Element('button',{key='save',confirm={title='Delete?'}}),'invalid_input','confirmation requires localized labels')
+Valid(MenuValidation.Element('input',{key='name',value='',error='Enter a valid name.'}), 'inline error')
+Valid(MenuValidation.Element('accordion',{key='horse',label='Jerry',selected=true}), 'selected markers')
+Invalid(MenuValidation.Element('accordion',{key='horse',label='Jerry',selected='yes'}),'invalid_input','selection boolean')
 -- The Cfx runtime supplies json.encode. This probe verifies the byte gate itself.
 json = { encode = function() return string.rep('x', 65537) end }
 Invalid(MenuValidation.Bytes({ key = 'oversized' }, 'payload'), 'invalid_input', 'encoded byte budget')

@@ -2,12 +2,31 @@
 
 ## Recorded completion
 
+### 2.0.0-alpha.9 preparation - 2026-10-26
+
+- Manifest/package versions agree at 2.0.0-alpha.9. Added reusable top-left anchor,
+  legacy bundled fonts/default RDRLino, consistent button spacing and feedback,
+  delayed corner busy indicator, inline field errors, opt-in localized confirmation,
+  and accordion alignment/toggle/selection marker options.
+- Navigation symbols use a separate system font to avoid game-font remapping.
+  Arrow/accordion hover and subdued held-down feedback were confirmed live by
+  the maintainer in Stables and other consumers. Stables tabs, checkout dialog,
+  previews and input restoration were exercised in the consumer workflow.
+- Current offline evidence: 75 browser tests, Lua validation/runtime 74/41
+  assertions, lint with zero errors, production build and exact runtime ZIP
+  verification. Bundled fonts are included by CSS references; JS/CSS retain the
+  256 KiB budget and the eight fonts have a separate 2 MiB budget.
+- Lua tests use Lupa Lua 5.4/Cfx simulations. Hosted Node 22 CI, full controller/
+  resolution matrix and fault/restart gates below remain pending; consumer live
+  acceptance does not certify every release gate. Generated ui/.artifacts stay
+  ignored; the eight source font files must be included in the PR.
+
 - Dropdown design/acceptance is **complete**, confirmed by the maintainer on 2026-09-03. Do not reopen it as unfinished feature work.
 - Required renderer parity, tabs, stepper, and the initial RedM fixture were completed on the maintainer's main PC. Commit `131a775` is the work-PC starting point.
 - Work-PC hardening adds exact field allowlists, bounded style/assets/sounds, encoded budgets, callback and navigation validation, replacement arrays, acknowledgements with three bounded retries, pause-close cancellation, and standard browser-gamepad routing.
 - The README is the complete beginner-facing element/configuration/API reference. It includes a runnable starter, callback examples, migration guidance, and restart rebuilding.
 - Packaging checks an actual flat install ZIP, referenced assets, absence of frontend source, the 256 KiB raw UI budget, and exclusion of the development fixture. Pushes to `main` build, verify, and automatically publish the package version without requiring contributors to create Git tags.
-- Local and GitHub packaging share one runtime file allowlist: `fxmanifest.lua`, the three manifest-loaded client Lua files, `ui/index.html`, and its referenced compiled JS/CSS assets. Documentation/README, tests, scripts, repository metadata and `.artifacts` are excluded. Verification rejects any extra file or directory, including stale/unreferenced assets. Checksums remain beside the ZIP.
+- Local and GitHub packaging share one runtime file allowlist: `fxmanifest.lua`, the three manifest-loaded client Lua files, `ui/index.html`, and its referenced compiled JS/CSS/font assets. Documentation/README, tests, scripts, repository metadata and `.artifacts` are excluded. Verification rejects any extra file or directory, including stale/unreferenced assets. Checksums remain beside the ZIP.
 
 ## Automated commands
 

@@ -16,6 +16,34 @@ const mountElement = (type, data, elementId = type) => mount(ElementRenderer, {
 describe('ElementRenderer interactions', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  it('shows busy feedback and refuses duplicate activation until acknowledgement', async () => {
+    let complete
+    post.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve }))
+    const wrapper = mountElement('button', { label: 'Save', busyLabel: 'Saving…' })
+    await wrapper.get('button').trigger('click')
+    expect(wrapper.get('button').attributes('aria-busy')).toBe('true')
+    expect(wrapper.text()).toBe('Save')
+    expect(wrapper.find('.busy-indicator').exists()).toBe(false)
+    expect(wrapper.get('button').classes()).not.toContain('pressed')
+    await wrapper.get('button').trigger('click')
+    expect(post).toHaveBeenCalledTimes(1)
+    complete({ ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(wrapper.get('button').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('links inline errors to text fields without changing the draft', () => {
+    for (const type of ['input', 'textarea', 'number']) {
+      const wrapper = mountElement(type, { label: 'Name', value: type === 'number' ? 2 : 'Willow', error: 'Enter a valid value.' })
+      const field = wrapper.get(type === 'textarea' ? 'textarea' : 'input')
+      expect(field.attributes('aria-invalid')).toBe('true')
+      expect(field.attributes('aria-describedby')).toBe(`${type}-error`)
+      expect(wrapper.get('[role="alert"]').text()).toBe('Enter a valid value.')
+      wrapper.unmount()
+    }
+  })
+
   it('renders whole slider values with an explicit decimal place', () => {
     const wrapper = mountElement('slider', { label: 'Camera FOV', value: 50, min: 10, max: 80, step: 0.25 })
     expect(wrapper.get('output').text()).toBe('50.0')
@@ -27,6 +55,15 @@ describe('ElementRenderer interactions', () => {
     expect(post).toHaveBeenCalledWith('elementAction', {
       menuId: 'owner:menu', pageId: 'page', elementId: 'button', event: 'activate', value: 'save', meta: undefined,
     })
+  })
+
+  it('marks button wrappers for shared spacing without changing non-button controls', () => {
+    const button = mountElement('button', { label: 'Save' })
+    const input = mountElement('input', { label: 'Name', value: '' })
+    expect(button.classes()).toContain('button-element')
+    expect(input.classes()).not.toContain('button-element')
+    button.unmount()
+    input.unmount()
   })
 
   it('toggles from its local controlled value', async () => {

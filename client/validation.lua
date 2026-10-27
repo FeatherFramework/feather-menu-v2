@@ -367,8 +367,12 @@ function MenuValidation.Menu(spec, path, requireKey)
         if problem then return problem end
     end
     if spec.position then
-        problem = Fields(spec.position, 'x y', path .. '.position'); if problem then return problem end
-        for key, value in pairs(spec.position) do problem = Length(value, path .. '.position.' .. key); if problem then return problem end end
+        problem = Fields(spec.position, 'x y anchor', path .. '.position'); if problem then return problem end
+        for key, value in pairs(spec.position) do
+            if key == 'anchor' then
+                if value ~= 'center' and value ~= 'top-left' then return Err(path .. '.position.anchor', 'must be center or top-left.') end
+            else problem = Length(value, path .. '.position.' .. key); if problem then return problem end end
+        end
     end
     if spec.size then
         problem = Fields(spec.size, 'width height minWidth maxWidth minHeight maxHeight breakpoints', path .. '.size'); if problem then return problem end
@@ -386,7 +390,10 @@ function MenuValidation.Menu(spec, path, requireKey)
                 if value ~= 'redemption' then return Err(path .. '.theme.preset', 'must be redemption.') end
             elseif key == 'radius' then problem = Length(value, path .. '.theme.radius')
             elseif key == 'fontFamily' then
-                if value ~= 'Georgia, serif' and value ~= 'Arial, sans-serif' and value ~= 'monospace' then return Err(path .. '.theme.fontFamily', 'must be a documented local font stack.') end
+                local fonts={['Georgia, serif']=true,['Arial, sans-serif']=true,monospace=true,
+                    rdr=true,RDRLino=true,RDRGothica=true,RDRCatalogueBold=true,HapnaSlabSerif=true,
+                    Redemption=true,WWI=true,Cherolina=true,AncientAd=true}
+                if not fonts[value] then return Err(path .. '.theme.fontFamily', 'must be a documented bundled font or local font stack.') end
             else problem = Color(value, path .. '.theme.' .. key) end
             if problem then return problem end
         end
@@ -400,13 +407,13 @@ end
 
 local elementFields = {
     header = 'value', subheader = 'value', textdisplay = 'value', line = '', bottomline = '',
-    button = 'value sound', input = 'value placeholder maxLength', textarea = 'value placeholder maxLength rows',
-    number = 'value min max step placeholder', slider = 'value min max step', progress = 'value min max step text',
+    button = 'value sound busy busyLabel confirm', input = 'value placeholder maxLength error', textarea = 'value placeholder maxLength rows error',
+    number = 'value min max step placeholder error', slider = 'value min max step', progress = 'value min max step text',
     toggle = 'value onLabel offLabel sound', checkbox = 'value onLabel offLabel sound',
     arrows = 'value options sound', dropdown = 'value options placeholder emptyText maxVisibleOptions sound',
     radio = 'value options sound', colorpicker = 'value options sound',
     gridslider = 'value maxx maxy step stepx stepy sound', pagearrows = 'current total sound',
-    imagebox = 'value image img alt width height aspectRatio objectFit sound', imageboxcontainer = 'items sound', spacer = 'size', accordion = 'value',
+    imagebox = 'value image img alt width height aspectRatio objectFit sound', imageboxcontainer = 'items sound', spacer = 'size', accordion = 'value labelAlign notify selected',
 }
 
 local function ImageSizing(spec, path)
@@ -444,11 +451,24 @@ function MenuValidation.Element(elementType, spec, path)
         end
     end
     if elementType == 'accordion' then
+        if spec.labelAlign ~= nil and spec.labelAlign ~= 'left' and spec.labelAlign ~= 'center' then return Err(path .. '.labelAlign', 'must be left or center.') end
+        problem = OptionalBoolean(spec, 'notify', path) or OptionalBoolean(spec, 'selected', path); if problem then return problem end
         if not spec.label or spec.label == '' then return Err(path .. '.label', 'is required.') end
         if spec.slot == 'header' or spec.slot == 'footer' or spec.row ~= nil then
             return Err(path, 'accordion must be an ungrouped content element.')
         end
     end
+    if elementType == 'button' then
+        problem = OptionalBoolean(spec, 'busy', path) or OptionalString(spec, 'busyLabel', path, 256)
+        if problem then return problem end
+        if spec.confirm ~= nil then
+            problem = Fields(spec.confirm, 'title message confirmLabel cancelLabel', path .. '.confirm'); if problem then return problem end
+            for _, key in ipairs({'title', 'message', 'confirmLabel', 'cancelLabel'}) do
+                if type(spec.confirm[key]) ~= 'string' or #spec.confirm[key] == 0 or #spec.confirm[key] > 512 then return Err(path .. '.confirm.' .. key, 'requires 1-512 bytes of localized text.') end
+            end
+        end
+    end
+    problem = OptionalString(spec, 'error', path, 512); if problem then return problem end
     if spec.sound ~= nil then problem = MenuValidation.Sound(spec.sound, path .. '.sound'); if problem then return problem end end
     for _, key in ipairs({ 'alt', 'text', 'emptyText' }) do problem = OptionalString(spec, key, path, 256); if problem then return problem end end
     if spec.maxLength ~= nil then

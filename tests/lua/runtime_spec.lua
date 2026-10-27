@@ -88,6 +88,8 @@ check(#ok(api.GetMenuState(menu)).pages[1].elements[2].data.options == 1, 'optio
 
 local failing = ok(api.AddElement(menu, page, 'button', { key = 'failing', label = 'Fail' }, function() error('expected fixture failure') end)).elementId
 check(request('elementAction', { menuId = menu, pageId = page, elementId = failing, event = 'activate' }).code == 'callback_failed', 'callback failures return an error without crashing')
+local busy = ok(api.AddElement(menu, page, 'button', { key='saving', label='Save', busy=true }, function() error('busy callback must not run') end)).elementId
+check(not request('elementAction', { menuId=menu, pageId=page, elementId=busy, event='activate' }).ok, 'busy button refuses NUI activation')
 ok(api.CloseMenu(menu)); check(not focus and api.IsInputCaptured() == false, 'close releases focus and input capture')
 ok(api.OpenMenu(menu))
 local revision = ok(api.GetMenuState(menu)).revision
