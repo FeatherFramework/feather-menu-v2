@@ -159,7 +159,8 @@
       :disabled="data.disabled || pending || data.busy"
       @click="activateButton"
     >
-      {{ data.busy && data.busyLabel ? data.busyLabel : data.label }}
+      <span>{{ data.busy && data.busyLabel ? data.busyLabel : data.label }}</span>
+      <span v-if="data.description" class="button-description">{{ data.description }}</span>
     </button>
 
     <label v-else-if="element.type === 'input' || element.type === 'number'" class="field">
