@@ -120,6 +120,11 @@
   function cancelGrid(event) {
     if (gridPointerId.value === event.pointerId) { gridPointerId.value = null; localValue.value = data.value.value; }
   }
+  function editInput(event) {
+    const input=event.target;
+    localValue.value=props.element.type==='number'
+      ? (Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : '') : input.value;
+  }
   function commitNumber(event) {
     const input = event.target;
     if (!Number.isFinite(input.valueAsNumber)) { localValue.value = data.value.value ?? data.value.min ?? 0; input.value = localValue.value; return; }
@@ -179,7 +184,7 @@
         :aria-invalid="data.error ? true : undefined"
         :aria-describedby="data.error ? `${element.elementId}-error` : undefined"
         :aria-label="data.label || data.placeholder || (element.type === 'number' ? 'Number' : 'Text')"
-        @input="localValue = element.type === 'number' ? $event.target.valueAsNumber : $event.target.value"
+        @input="editInput($event)"
         @change="element.type === 'number' ? commitNumber($event) : emit('change')"
       />
       <span v-if="data.error" :id="`${element.elementId}-error`" class="field-error" role="alert">{{ data.error }}</span>
